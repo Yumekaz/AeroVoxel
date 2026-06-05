@@ -1,1 +1,38 @@
+# AeroVoxel Git Ignore
 AeroVoxel_Project_Bible_SRS.md
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.env
+.env.*
+.vite/
+.eslintcache
+
+# Python / Backend
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Data / Uploads
+backend/app/assets/uploads/
+backend/app/assets/flow/*.npy
+!backend/app/assets/flow/sports_car_v1_*.npy
+!backend/app/assets/flow/drone_v1_*.npy
+!backend/app/assets/flow/airfoil_v1_*.npy
+uploads/
+*.log
+.DS_Store
+.idea/
+.vscode/
