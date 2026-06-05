@@ -2,6 +2,14 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
+export interface FlowData {
+  velocity: Float32Array;
+  pressure: Float32Array;
+  mask: Uint8Array;
+  nx: number;
+  ny: number;
+}
+
 interface WindTunnelViewerProps {
   caseId: string;
   windSpeed: number; // m/s (typically 5 to 30)
@@ -9,6 +17,7 @@ interface WindTunnelViewerProps {
   showStreamlines: boolean;
   showPressure: boolean;
   showWake: boolean;
+  flowData: FlowData | null;
 }
 
 export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
@@ -18,6 +27,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
   showStreamlines,
   showPressure,
   showWake,
+  flowData,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -195,6 +205,8 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
       });
     }
 
+    // If we have flowData, we will build a visual indicator of the actual custom silhouette later.
+    // For now, render standard templates or a general mesh representation.
     const group = new THREE.Group();
     let geom: THREE.BufferGeometry;
     const mat = new THREE.MeshStandardMaterial({
@@ -315,7 +327,8 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
       group.add(wingGroup);
       group.position.set(0, 0, 0);
     } else {
-      const boxGeom = new THREE.BoxGeometry(1.6, 1.2, 1.2);
+      // Fallback or custom upload silhouette rendering in 3D: render a generic extruded plate
+      const boxGeom = new THREE.BoxGeometry(1.8, 1.2, 0.4);
       const mesh = new THREE.Mesh(boxGeom, mat);
       const wMesh = new THREE.Mesh(boxGeom, wireMat);
       group.add(mesh, wMesh);
@@ -359,6 +372,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
           const positions = pointsGeom.attributes.position.array as Float32Array;
           const colors = pointsGeom.attributes.color.array as Float32Array;
 
+          // Procedural radius limits
           let obstacleRadius = 1.2;
           if (caseId.includes('car')) obstacleRadius = 1.4;
           else if (caseId.includes('drone')) obstacleRadius = 1.5;
@@ -369,40 +383,98 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
           for (let i = 0; i < particleCount; i++) {
             const p = particles[i];
-            const distVec = p.pos.clone().sub(objectPos);
-            const dist2D = Math.sqrt(distVec.x * distVec.x + distVec.y * distVec.y);
-
+            
             let vx = speed;
             let vy = 0;
             let vz = 0;
+            let pressureVal = 0.0;
+            let isObstacle = false;
 
-            if (dist2D < obstacleRadius * 3.5 && p.pos.x < obstacleRadius * 3.0) {
-              const factor = Math.pow(obstacleRadius / Math.max(dist2D, 0.2), 2);
-              if (dist2D > 0.05) {
-                const normal = distVec.clone().normalize();
-                const radialComponent = speed * normal.x * factor;
-                vx = speed - radialComponent * normal.x;
-                vy = -radialComponent * normal.y;
-                
-                if (p.pos.x > 0.2) {
-                  vx *= (0.2 + 0.3 * (dist2D / (obstacleRadius * 3)));
-                  if (showWake) {
-                    vy += (Math.random() - 0.5) * speed * 0.4 * factor;
-                    vz += (Math.random() - 0.5) * speed * 0.4 * factor;
+            // Check if we use LBM grid lookup or procedural potential-flow deflection
+            if (flowData) {
+              const nx = flowData.nx;
+              const ny = flowData.ny;
+              
+              // Map particle coordinates:
+              // pos.x is in [-8, 8] -> map to index [0, nx-1]
+              // pos.y is in [-2, 2] -> map to index [0, ny-1]
+              // Bottom of simulation in Python is y = ny-1, so we flip y coordinate
+              const grid_x = Math.max(0, Math.min(nx - 1, Math.floor(((p.pos.x + 8) / 16) * (nx - 1))));
+              const grid_y = Math.max(0, Math.min(ny - 1, (ny - 1) - Math.floor(((p.pos.y + 2) / 4) * (ny - 1))));
+              
+              const offset = grid_y * nx + grid_x;
+              
+              // Check boundary mask
+              isObstacle = flowData.mask[offset] > 0;
+              
+              if (isObstacle) {
+                // Instantly recycle particle to avoid clustering inside obstacle
+                p.pos.x = -8.0;
+                p.pos.y = p.baseY;
+                p.pos.z = p.baseZ;
+                p.age = 0;
+                p.life = 100 + Math.random() * 50;
+                continue;
+              }
+              
+              // Retrieve simulated velocity (Lattice velocity: U_inlet = 0.08)
+              // Map velocity components:
+              // u_x = velocity[0, y, x]
+              // u_y = velocity[1, y, x] (we flip sign for WebGL layout)
+              const u_x = flowData.velocity[offset];
+              const u_y = -flowData.velocity[ny * nx + offset];
+              
+              // Scale lattice velocities to match speed sliders
+              const velocityScale = speed / 0.08;
+              vx = u_x * velocityScale * 0.15; // apply visual scaling
+              vy = u_y * velocityScale * 0.15;
+              vz = 0;
+              
+              // Add slight turbulence in wake (behind shape x > 0)
+              if (showWake && p.pos.x > 0.0 && u_x < 0.05) {
+                const wakeFactor = Math.max(0, 1 - (u_x / 0.08));
+                vy += (Math.random() - 0.5) * speed * 0.08 * wakeFactor;
+                vz += (Math.random() - 0.5) * speed * 0.08 * wakeFactor;
+              }
+              
+              // Retrieve pressure scalar
+              pressureVal = flowData.pressure[offset];
+            } else {
+              // Procedural Potential-Flow approximation (Offline Fallback)
+              const distVec = p.pos.clone().sub(objectPos);
+              const dist2D = Math.sqrt(distVec.x * distVec.x + distVec.y * distVec.y);
+
+              if (dist2D < obstacleRadius * 3.5 && p.pos.x < obstacleRadius * 3.0) {
+                const factor = Math.pow(obstacleRadius / Math.max(dist2D, 0.2), 2);
+                if (dist2D > 0.05) {
+                  const normal = distVec.clone().normalize();
+                  const radialComponent = speed * normal.x * factor;
+                  vx = speed - radialComponent * normal.x;
+                  vy = -radialComponent * normal.y;
+                  
+                  if (p.pos.x > 0.2) {
+                    vx *= (0.2 + 0.3 * (dist2D / (obstacleRadius * 3)));
+                    if (showWake) {
+                      vy += (Math.random() - 0.5) * speed * 0.4 * factor;
+                      vz += (Math.random() - 0.5) * speed * 0.4 * factor;
+                    }
                   }
                 }
               }
             }
 
+            // Move particle
             p.pos.x += vx * dt * 60;
             p.pos.y += vy * dt * 60;
             p.pos.z += vz * dt * 60;
 
+            // Apply wind angle drift
             const angleRad = (windAngle * Math.PI) / 180;
             if (Math.abs(windAngle) > 0.1 && p.pos.x < -obstacleRadius) {
               p.pos.y += Math.sin(angleRad) * speed * dt * 30;
             }
 
+            // Recycle exit particles
             if (p.pos.x > 8.0 || p.age > p.life) {
               p.pos.x = -8.0;
               p.pos.y = p.baseY;
@@ -418,26 +490,53 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
             positions[idx+1] = p.pos.y;
             positions[idx+2] = p.pos.z;
 
+            // Default: Cyan
             let r = 0.0, g = 0.85, b = 1.0;
 
             if (showPressure) {
-              const dist = p.pos.distanceTo(objectPos);
-              if (dist < obstacleRadius * 2.8) {
-                if (p.pos.x < -0.15) {
-                  const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 1.8)));
-                  r = intensity;
-                  g = 1 - intensity * 0.8;
-                  b = 1 - intensity;
-                } else if (p.pos.x >= -0.15 && p.pos.x <= 0.5) {
-                  const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 2.0)));
-                  r = 0;
+              if (flowData) {
+                // Color scaling from LBM pressure (-0.03 to +0.03 range)
+                const normP = (pressureVal + 0.02) / 0.04; // scale to [0, 1]
+                const clampP = Math.max(0.0, Math.min(1.0, normP));
+                
+                if (clampP > 0.65) {
+                  // High pressure (Stagnation) - Red/Orange
+                  const intensity = (clampP - 0.65) / 0.35;
+                  r = 0.5 + intensity * 0.5;
                   g = 0.7 * (1 - intensity);
-                  b = 1.0;
+                  b = 0;
+                } else if (clampP < 0.35) {
+                  // Low pressure (Separation/Lift acceleration) - Blue
+                  const intensity = (0.35 - clampP) / 0.35;
+                  r = 0;
+                  g = 0.8 * (1 - intensity);
+                  b = 0.6 + intensity * 0.4;
                 } else {
-                  const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 3.0)));
-                  r = intensity * 0.6;
-                  g = 0.8;
-                  b = 0.2;
+                  // Neutral - Cyan/Green
+                  r = 0;
+                  g = 0.9;
+                  b = 0.3;
+                }
+              } else {
+                // Procedural pressure colors (Offline Fallback)
+                const dist = p.pos.distanceTo(objectPos);
+                if (dist < obstacleRadius * 2.8) {
+                  if (p.pos.x < -0.15) {
+                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 1.8)));
+                    r = intensity;
+                    g = 1 - intensity * 0.8;
+                    b = 1 - intensity;
+                  } else if (p.pos.x >= -0.15 && p.pos.x <= 0.5) {
+                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 2.0)));
+                    r = 0;
+                    g = 0.7 * (1 - intensity);
+                    b = 1.0;
+                  } else {
+                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 3.0)));
+                    r = intensity * 0.6;
+                    g = 0.8;
+                    b = 0.2;
+                  }
                 }
               }
             }
@@ -466,7 +565,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [caseId, windSpeed, windAngle, showStreamlines, showPressure, showWake]);
+  }, [caseId, windSpeed, windAngle, showStreamlines, showPressure, showWake, flowData]);
 
   return (
     <div className="tunnel-view-container">

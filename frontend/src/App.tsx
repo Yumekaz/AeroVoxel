@@ -8,6 +8,8 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { WindTunnelViewer } from './components/WindTunnelViewer';
+import type { FlowData } from './components/WindTunnelViewer';
+import { fetchNpy } from './utils/npyLoader';
 import './App.css';
 
 interface DemoCase {
@@ -74,6 +76,10 @@ function App() {
   const [contourPreview, setContourPreview] = useState<string | null>(null);
   const [simMode, setSimMode] = useState<string>('Cached 3D Demo');
 
+  // Flow Field binary data arrays (Phase 2)
+  const [flowData, setFlowData] = useState<FlowData | null>(null);
+  const [loadingFlowData, setLoadingFlowData] = useState<boolean>(false);
+
   // Ping backend health check on mount
   useEffect(() => {
     const checkHealth = async () => {
@@ -93,6 +99,59 @@ function App() {
     const interval = setInterval(checkHealth, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch LBM binary datasets from the backend (Phase 2 Engine)
+  useEffect(() => {
+    if (backendStatus !== 'connected') {
+      setFlowData(null);
+      return;
+    }
+
+    const loadFlowArrays = async () => {
+      setLoadingFlowData(true);
+      try {
+        let backendCaseId = selectedCase.id;
+        // Map to exact API case IDs
+        if (backendCaseId === 'sports_car') backendCaseId = 'sports_car_v1';
+        else if (backendCaseId === 'drone') backendCaseId = 'drone_v1';
+        else if (backendCaseId === 'airfoil') backendCaseId = 'airfoil_v1';
+
+        if (backendCaseId === 'custom_upload') {
+          // Solved live in Phase 4 solver
+          setLoadingFlowData(false);
+          return;
+        }
+
+        const metadataUrl = `http://127.0.0.1:8000/api/flow-field/${backendCaseId}`;
+        const metaResponse = await fetch(metadataUrl);
+        if (!metaResponse.ok) throw new Error('Failed to load metadata');
+        const meta = await metaResponse.json();
+
+        // Download the arrays
+        const host = 'http://127.0.0.1:8000';
+        const [velNpy, pressNpy, maskNpy] = await Promise.all([
+          fetchNpy(host + meta.velocity_url),
+          fetchNpy(host + meta.pressure_url),
+          fetchNpy(host + meta.mask_url)
+        ]);
+
+        setFlowData({
+          velocity: velNpy.data as Float32Array,
+          pressure: pressNpy.data as Float32Array,
+          mask: maskNpy.data as Uint8Array,
+          nx: velNpy.shape[2], // (2, ny, nx)
+          ny: velNpy.shape[1]
+        });
+      } catch (err) {
+        console.error('Error loading flow arrays:', err);
+        setFlowData(null);
+      } finally {
+        setLoadingFlowData(false);
+      }
+    };
+
+    loadFlowArrays();
+  }, [selectedCase.id, backendStatus]);
 
   // Handle mock file upload for visual feedback (Phase 3 Shell)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -285,13 +344,14 @@ function App() {
             showStreamlines={showStreamlines}
             showPressure={showPressure}
             showWake={showWake}
+            flowData={flowData}
           />
 
           {/* Overlay Badges */}
           <div className="viewer-overlay-left">
             <div className={`mode-badge ${simMode.includes('Demo') ? 'cached' : 'computed'}`}>
               <Layers size={13} />
-              <span>{simMode}</span>
+              <span>{simMode} {loadingFlowData ? '(Syncing...)' : ''}</span>
             </div>
             {selectedCase.id === 'custom_upload' && (
               <div className="mode-badge" style={{ borderColor: 'var(--accent-orange)', color: 'var(--accent-orange)' }}>
