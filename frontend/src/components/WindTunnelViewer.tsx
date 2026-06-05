@@ -63,10 +63,15 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
   // Initialize scene, camera, lights, orbit controls
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    // React StrictMode can remount effects during development. Clear any stale
+    // renderer canvas before attaching the active WebGL surface.
+    container.replaceChildren();
+
+    const width = Math.max(1, container.clientWidth);
+    const height = Math.max(1, container.clientHeight);
 
     // 1. Scene
     const scene = new THREE.Scene();
@@ -84,7 +89,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    containerRef.current.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     // 4. Controls
@@ -224,9 +229,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
       }
     });
 
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
-    }
+    resizeObserver.observe(container);
 
     // Clean up
     return () => {
@@ -234,9 +237,12 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       controls.dispose();
       renderer.dispose();
-      if (containerRef.current && renderer.domElement.parentNode) {
-        containerRef.current.removeChild(renderer.domElement);
+      if (renderer.domElement.parentNode === container) {
+        container.removeChild(renderer.domElement);
       }
+      rendererRef.current = null;
+      cameraRef.current = null;
+      sceneRef.current = null;
     };
   }, []);
 
