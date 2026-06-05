@@ -81,6 +81,64 @@ function App() {
   const [loadingFlowData, setLoadingFlowData] = useState<boolean>(false);
   const [closestPreset, setClosestPreset] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [runningSolver, setRunningSolver] = useState<boolean>(false);
+
+  const runLiveSimulation = async () => {
+    if (!activeJobId) return;
+    setRunningSolver(true);
+    setSimMode('Solving Fluid Fields...');
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/simulate/simple', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          job_id: activeJobId,
+          wind_speed: windSpeed,
+          wind_angle_deg: windAngle
+        }),
+      });
+
+      if (!response.ok) throw new Error('Simulation failed');
+      const res = await response.json();
+
+      const host = 'http://127.0.0.1:8000';
+      const [velNpy, pressNpy, maskNpy] = await Promise.all([
+        fetchNpy(host + res.velocity_url),
+        fetchNpy(host + res.pressure_url),
+        fetchNpy(host + res.mask_url)
+      ]);
+
+      setFlowData({
+        velocity: velNpy.data as Float32Array,
+        pressure: pressNpy.data as Float32Array,
+        mask: maskNpy.data as Uint8Array,
+        nx: velNpy.shape[2],
+        ny: velNpy.shape[1]
+      });
+
+      setSimMode('2D Solver Completed');
+      
+      const solvedCase: DemoCase = {
+        id: 'custom_upload',
+        name: selectedCase.name,
+        desc: selectedCase.desc,
+        drag: res.metrics.drag_coefficient_estimate,
+        lift: res.metrics.lift_coefficient_estimate,
+        wake: res.metrics.wake_score,
+        mode: '2D Solver Runs (CPU)',
+        explanation: `CFD calculations converged in 600 steps! The streamline particles are now deflecting along the computed velocity fields. Drag coefficient estimated at ${res.metrics.drag_coefficient_estimate.toFixed(2)}, lift force at ${res.metrics.lift_coefficient_estimate.toFixed(2)}.`
+      };
+      setSelectedCase(solvedCase);
+    } catch (err) {
+      console.error('Simulation run failed:', err);
+      setSimMode('2D Solver Failed');
+    } finally {
+      setRunningSolver(false);
+    }
+  };
 
   // Ping backend health check on mount
   useEffect(() => {
@@ -438,12 +496,14 @@ function App() {
                   style={{ display: 'none' }} 
                 />
               </label>
-            ) : uploading ? (
+            ) : uploading || runningSolver ? (
               <div className="processing-box">
                 <div className="spinner"></div>
-                <div className="processing-title">Computer Vision Pipeline</div>
+                <div className="processing-title">
+                  {runningSolver ? 'Navier-Stokes Solver' : 'Computer Vision Pipeline'}
+                </div>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                  {processingStep}
+                  {runningSolver ? 'Solving 2D Lattice Boltzmann equations (600 steps)...' : processingStep}
                 </div>
               </div>
             ) : (
@@ -473,6 +533,30 @@ function App() {
                   <div style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
                     Job ID: {activeJobId.substring(0, 8)}...
                   </div>
+                )}
+                {simMode === '2D Solver Ready' && (
+                  <button 
+                    onClick={runLiveSimulation}
+                    style={{
+                      marginTop: '10px',
+                      background: 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))',
+                      border: 'none',
+                      color: '#000',
+                      fontWeight: 700,
+                      fontSize: '12px',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      width: '100%',
+                      boxShadow: 'var(--glow-cyan)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    Run Live LBM Simulation
+                  </button>
                 )}
               </div>
             )}
