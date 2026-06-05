@@ -79,6 +79,8 @@ function App() {
   // Flow Field binary data arrays (Phase 2)
   const [flowData, setFlowData] = useState<FlowData | null>(null);
   const [loadingFlowData, setLoadingFlowData] = useState<boolean>(false);
+  const [closestPreset, setClosestPreset] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   // Ping backend health check on mount
   useEffect(() => {
@@ -111,15 +113,18 @@ function App() {
       setLoadingFlowData(true);
       try {
         let backendCaseId = selectedCase.id;
-        // Map to exact API case IDs
-        if (backendCaseId === 'sports_car') backendCaseId = 'sports_car_v1';
-        else if (backendCaseId === 'drone') backendCaseId = 'drone_v1';
-        else if (backendCaseId === 'airfoil') backendCaseId = 'airfoil_v1';
-
         if (backendCaseId === 'custom_upload') {
-          // Solved live in Phase 4 solver
-          setLoadingFlowData(false);
-          return;
+          if (!closestPreset) {
+            setFlowData(null);
+            setLoadingFlowData(false);
+            return;
+          }
+          backendCaseId = closestPreset;
+        } else {
+          // Map to exact API case IDs
+          if (backendCaseId === 'sports_car') backendCaseId = 'sports_car_v1';
+          else if (backendCaseId === 'drone') backendCaseId = 'drone_v1';
+          else if (backendCaseId === 'airfoil') backendCaseId = 'airfoil_v1';
         }
 
         const metadataUrl = `http://127.0.0.1:8000/api/flow-field/${backendCaseId}`;
@@ -151,56 +156,95 @@ function App() {
     };
 
     loadFlowArrays();
-  }, [selectedCase.id, backendStatus]);
+  }, [selectedCase.id, backendStatus, closestPreset]);
 
-  // Handle mock file upload for visual feedback (Phase 3 Shell)
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Real file upload to backend with cv processing and preset matching (Phase 3)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploading(true);
     setUploadedFile(file.name);
     setContourPreview(null);
-    setProcessingStep('Extracting keyframes & resizing...');
+    setClosestPreset(null);
+    setProcessingStep('Uploading file to server...');
 
-    // Simulate the CV extraction stages
+    if (backendStatus !== 'connected') {
+      runMockUploadFlow(file);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setProcessingStep('Extracting keyframe & boundaries...');
+      const response = await fetch('http://127.0.0.1:8000/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Upload failed');
+      const res = await response.json();
+
+      setUploading(false);
+      setClosestPreset(res.closest_preset);
+      setActiveJobId(res.job_id);
+      setContourPreview('http://127.0.0.1:8000' + res.preview_url);
+      setSimMode('2D Solver Ready');
+
+      const customCase: DemoCase = {
+        id: 'custom_upload',
+        name: `Upload: ${res.filename.substring(0, 12)}`,
+        desc: `Custom shape. Scale: ${res.scale_estimate.toFixed(3)} mm/px.`,
+        drag: res.closest_preset === 'sports_car_v1' ? 0.28 : res.closest_preset === 'drone_v1' ? 1.15 : 0.06,
+        lift: res.closest_preset === 'airfoil_v1' ? 0.45 : 0.00,
+        wake: res.closest_preset === 'drone_v1' ? 0.88 : 0.65,
+        mode: '2D Solver Ready (CPU)',
+        explanation: `${res.detected_object}. ${res.scale_status}. Under Phase 3, this shape is matched to the closest template flow field. Run LBM simulation to calculate live 2D fluid velocities for this shape!`
+      };
+      setSelectedCase(customCase);
+    } catch (err) {
+      console.warn('Real upload failed, falling back to mock flow:', err);
+      runMockUploadFlow(file);
+    }
+  };
+
+  const runMockUploadFlow = (file: File) => {
+    setProcessingStep('Extracting keyframe (Mock)...');
     setTimeout(() => {
-      setProcessingStep('Detecting calibration card marker...');
-      
+      setProcessingStep('Detecting calibration card marker (Mock)...');
       setTimeout(() => {
-        setProcessingStep('Computing binary boundary silhouette...');
-        
-        // Use a mock car silhouette image for visual WOW
+        setProcessingStep('Computing binary boundary silhouette (Mock)...');
         setContourPreview('https://images.unsplash.com/photo-1542282088-72c9c27ed0cd?q=80&w=400&auto=format&fit=crop');
-        
         setTimeout(() => {
           setUploading(false);
           setProcessingStep('');
-          
-          // Map to closest preset (car)
-          setSimMode('2D Computed Fluid Solver');
-          
-          // Custom computed case
+          setClosestPreset('sports_car_v1');
+          setSimMode('Cached 3D Demo (Mock)');
+
           const customCase: DemoCase = {
             id: 'custom_upload',
-            name: `Silhouette: ${file.name.substring(0, 15)}...`,
-            desc: 'Real-world shape extracted via Computer Vision.',
-            drag: 0.38,
-            lift: -0.02,
-            wake: 0.74,
-            mode: '2D Solver Runs (CPU)',
-            explanation: 'The computer vision pipeline extracted the boundary contour. The CPU-based 2D solver solved the Navier-Stokes fluid equations for this silhouette, calculating velocity deflection and high/low pressure zones around your physical object.'
+            name: `Mock: ${file.name.substring(0, 12)}`,
+            desc: 'Ground vehicle approximation (Offline Fallback).',
+            drag: 0.35,
+            lift: -0.01,
+            wake: 0.70,
+            mode: 'Cached 3D Demo (Mock)',
+            explanation: 'Running in offline fallback mode. The shape was matched to a standard ground vehicle template, displaying approximate cached flow vectors.'
           };
           setSelectedCase(customCase);
-        }, 1500);
-      }, 1500);
-    }, 1500);
+        }, 1200);
+      }, 1200);
+    }, 1200);
   };
 
   const resetToPresets = () => {
     setSelectedCase(DEMO_CASES[0]);
     setUploadedFile(null);
     setContourPreview(null);
+    setClosestPreset(null);
+    setActiveJobId(null);
     setSimMode('Cached 3D Demo');
   };
 
@@ -425,6 +469,11 @@ function App() {
                 <div style={{ fontSize: '11px', color: 'var(--accent-neon)', fontWeight: 500 }}>
                   Active Silhouette Analysis
                 </div>
+                {activeJobId && (
+                  <div style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                    Job ID: {activeJobId.substring(0, 8)}...
+                  </div>
+                )}
               </div>
             )}
           </div>
