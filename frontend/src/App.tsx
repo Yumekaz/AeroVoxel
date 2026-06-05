@@ -83,6 +83,11 @@ function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [runningSolver, setRunningSolver] = useState<boolean>(false);
 
+  // Phase 5 Voxel & Slicing states
+  const [showVoxels, setShowVoxels] = useState<boolean>(false);
+  const [showSlicePlane, setShowSlicePlane] = useState<boolean>(false);
+  const [slicePosition, setSlicePosition] = useState<number>(0.0);
+
   const runLiveSimulation = async () => {
     if (!activeJobId) return;
     setRunningSolver(true);
@@ -304,6 +309,9 @@ function App() {
     setClosestPreset(null);
     setActiveJobId(null);
     setSimMode('Cached 3D Demo');
+    setShowVoxels(false);
+    setShowSlicePlane(false);
+    setSlicePosition(0.0);
   };
 
   return (
@@ -434,6 +442,40 @@ function App() {
               <span className="toggle-label">Wake Turbulence Jitter</span>
               <div className="toggle-switch"></div>
             </div>
+
+            <div 
+              className={`toggle-item ${showVoxels ? 'active' : ''}`}
+              onClick={() => setShowVoxels(!showVoxels)}
+            >
+              <span className="toggle-label">Voxelized Geometry View</span>
+              <div className="toggle-switch"></div>
+            </div>
+
+            <div 
+              className={`toggle-item ${showSlicePlane ? 'active' : ''}`}
+              onClick={() => setShowSlicePlane(!showSlicePlane)}
+            >
+              <span className="toggle-label">Enable Cross-Section Slicer</span>
+              <div className="toggle-switch"></div>
+            </div>
+
+            {showSlicePlane && (
+              <div className="control-group" style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                <div className="control-label">
+                  <span>Slice Plane Height (Y)</span>
+                  <span className="control-value">{slicePosition.toFixed(1)} m</span>
+                </div>
+                <input
+                  type="range"
+                  className="control-slider"
+                  min="-1.8"
+                  max="1.8"
+                  step="0.1"
+                  value={slicePosition}
+                  onChange={(e) => setSlicePosition(Number(e.target.value))}
+                />
+              </div>
+            )}
           </div>
         </section>
 
@@ -447,6 +489,9 @@ function App() {
             showPressure={showPressure}
             showWake={showWake}
             flowData={flowData}
+            showVoxels={showVoxels}
+            showSlicePlane={showSlicePlane}
+            slicePosition={slicePosition}
           />
 
           {/* Overlay Badges */}
