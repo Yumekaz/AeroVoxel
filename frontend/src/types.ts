@@ -25,7 +25,7 @@ export interface ActiveCase {
   isCustom: boolean;
 }
 
-export type DataSource = 'cached' | 'computed' | 'offline_fallback';
+export type DataSource = 'cached' | 'computed' | 'offline_fallback' | 'real_3d_lbm';
 
 export const PROCESSING_STEPS = [
   'Upload file',

@@ -77,6 +77,20 @@ const FALLBACK_CASES: ActiveCase[] = [
       'Flow remains attached to the smooth surface for most of the chord. Curvature differences create asymmetric pressure with a minimal wake profile.',
     isCustom: false,
   },
+  {
+    id: 'sphere_3d',
+    backendId: 'sphere_3d_v1',
+    name: 'Sphere 3D (Real LBM)',
+    desc: 'Real 3D LBM-generated flow around a sphere — center-slice view.',
+    drag: 0.47,
+    lift: 0.0,
+    wake: 0.35,
+    mode: 'real_3d_lbm',
+    modeLabel: 'Real 3D LBM-generated dataset (D3Q19)',
+    explanation:
+      'This flow field was computed by a real D3Q19 Lattice Boltzmann solver running on your hardware. The sphere creates a symmetric stagnation zone at the front and a turbulent wake at the rear. The 2D center-slice shows the cross-section through the sphere midplane.',
+    isCustom: false,
+  },
 ];
 
 function App() {
@@ -155,7 +169,7 @@ function App() {
 
         if (!activeCase.isCustom) {
           setSimModeLabel(meta.mode_label ?? 'Cached 2D demonstration field');
-          setDataSource('cached');
+          setDataSource(activeCase.mode === 'real_3d_lbm' ? 'real_3d_lbm' : 'cached');
         }
       } catch (err) {
         console.error('Error loading flow arrays:', err);
@@ -467,7 +481,7 @@ function App() {
                     className={`preset-button ${selectedCase.backendId === c.backendId ? 'active' : ''}`}
                     onClick={() => {
                       setSelectedCase(c);
-                      setDataSource('cached');
+                      setDataSource(c.mode === 'real_3d_lbm' ? 'real_3d_lbm' : 'cached');
                       setSimModeLabel(c.modeLabel);
                       setLastSolverAngle(null);
                     }}
@@ -568,7 +582,7 @@ function App() {
           />
 
           <div className="viewer-overlay-left">
-            <div className={`mode-badge ${dataSource === 'computed' ? 'computed' : 'cached'}`}>
+            <div className={`mode-badge ${dataSource === 'computed' ? 'computed' : dataSource === 'real_3d_lbm' ? 'real-3d' : 'cached'}`}>
               <Layers size={13} />
               <span>
                 {simModeLabel}
@@ -731,9 +745,11 @@ function App() {
                   value={
                     dataSource === 'computed'
                       ? 'Live 2D LBM solver'
-                      : dataSource === 'offline_fallback'
-                        ? 'Offline cached fallback'
-                        : 'Precomputed demonstration field'
+                      : dataSource === 'real_3d_lbm'
+                        ? 'Real 3D LBM solver (D3Q19, center-slice)'
+                        : dataSource === 'offline_fallback'
+                          ? 'Offline cached fallback'
+                          : 'Precomputed demonstration field'
                   }
                 />
                 <DetailRow label="Wind speed" value={`${windSpeed} m/s`} />

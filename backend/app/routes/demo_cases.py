@@ -58,6 +58,23 @@ DEMO_CASES = [
         "wake_score": 0.12,
         "grid": {"nx": 128, "ny": 64, "nz": 1},
     },
+    {
+        "case_id": "sphere_3d_v1",
+        "name": "Sphere 3D (Real LBM)",
+        "mode": "real_3d_lbm",
+        "mode_label": "Real 3D LBM-generated dataset (D3Q19)",
+        "description": "Real solver-generated flow around a sphere — center-slice view.",
+        "explanation": (
+            "This flow field was computed by a real D3Q19 Lattice Boltzmann solver running on your "
+            "hardware. The sphere creates a symmetric stagnation zone at the front face and a "
+            "turbulent wake region behind it. Drag coefficient for a sphere at moderate Reynolds "
+            "number is approximately 0.47. This 2D view is a center-slice through the 3D domain."
+        ),
+        "drag_coefficient_estimate": 0.47,
+        "lift_coefficient_estimate": 0.0,
+        "wake_score": 0.35,
+        "grid": {"nx": 64, "ny": 64, "nz": 64},
+    },
 ]
 
 @router.get("/demo-cases")

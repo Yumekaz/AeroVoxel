@@ -1,0 +1,11 @@
+case_id: sphere_3d_v1
+solver: Pure-Python D3Q19 LBM (NumPy, CPU)
+grid: 64x64x64
+steps: 200
+tau: 0.8
+u_inlet: 0.05
+elapsed_seconds: 89.9
+drag_coefficient: 0.47
+lift_coefficient: 0.0
+wake_score: 0.0494
+fluidx3d_available: False

@@ -221,6 +221,12 @@
   color: var(--accent-cyan);
 }
 
+.mode-badge.real-3d {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #10b981;
+}
+
 /* Navigation & Selectors */
 .preset-list {
   display: flex;

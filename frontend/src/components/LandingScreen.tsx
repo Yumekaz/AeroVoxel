@@ -40,7 +40,7 @@ export function LandingScreen({ onTryDemo, onUpload }: LandingScreenProps) {
           </div>
           <div className="landing-feature">
             <Info size={14} />
-            <span>Live 2D LBM solver for custom shapes</span>
+            <span>Live 2D LBM solver + real 3D LBM dataset</span>
           </div>
         </div>
       </div>
