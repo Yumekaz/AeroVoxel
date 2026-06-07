@@ -22,6 +22,7 @@ interface WindTunnelViewerProps {
   showVoxels: boolean;
   showSlicePlane: boolean;
   slicePosition: number; // -2.0 to 2.0 (representing Y floor-to-ceiling)
+  onFpsUpdate?: (fps: number) => void;
 }
 
 export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
@@ -35,6 +36,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
   showVoxels,
   showSlicePlane,
   slicePosition,
+  onFpsUpdate,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -246,6 +248,30 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
     };
   }, []);
 
+  const buildMaskExtrusion = (maskData: Uint8Array, nx: number, ny: number, group: THREE.Group) => {
+    const voxelGeom = new THREE.BoxGeometry(0.11, 0.06, 0.11);
+    const voxelMat = new THREE.MeshStandardMaterial({
+      color: 0x10b981,
+      roughness: 0.35,
+      metalness: 0.5,
+      flatShading: true,
+    });
+
+    const step = 2;
+    for (let gy = 0; gy < ny; gy += step) {
+      for (let gx = 0; gx < nx; gx += step) {
+        const offset = gy * nx + gx;
+        if (maskData[offset] === 0) continue;
+
+        const worldX = ((gx / (nx - 1)) * 16) - 8;
+        const worldY = 2 - ((gy / (ny - 1)) * 4);
+        const mesh = new THREE.Mesh(voxelGeom, voxelMat);
+        mesh.position.set(worldX, worldY, 0);
+        group.add(mesh);
+      }
+    }
+  };
+
   // Update Obstacle Geometry (Smooth vs Voxelized) when caseId or showVoxels changes
   useEffect(() => {
     const scene = sceneRef.current;
@@ -341,13 +367,12 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
           }
         }
         addVoxels(voxelGroup, coords);
+      } else if (flowData) {
+        buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, voxelGroup);
       } else {
-        // Custom uploads - simple voxel grid block
         for (let x = -0.8; x <= 0.8; x += 0.3) {
-          for (let y = -0.5; y <= 0.5; y += 0.3) {
-            for (let z = -0.5; z <= 0.5; z += 0.3) {
-              coords.push([x, y, z]);
-            }
+          for (let y = -0.3; y <= 0.3; y += 0.3) {
+            coords.push([x, y, 0]);
           }
         }
         addVoxels(voxelGroup, coords);
@@ -456,8 +481,13 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
         group.add(wingGroup);
         group.position.set(0, 0, 0);
+      } else if (flowData) {
+        const extrudeGroup = new THREE.Group();
+        buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, extrudeGroup);
+        group.add(extrudeGroup);
+        group.position.set(0, 0, 0);
       } else {
-        const boxGeom = new THREE.BoxGeometry(1.8, 1.2, 0.4);
+        const boxGeom = new THREE.BoxGeometry(1.8, 0.8, 0.2);
         const mesh = new THREE.Mesh(boxGeom, mat);
         const wMesh = new THREE.Mesh(boxGeom, wireMat);
         group.add(mesh, wMesh);
@@ -467,16 +497,26 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
     scene.add(group);
     obstacleRef.current = group;
-  }, [caseId, showVoxels]);
+  }, [caseId, showVoxels, flowData]);
 
   // Main animation frame loop: calculates streamlines, updates slice plane, and updates slice vector arrows
   useEffect(() => {
     let lastTime = performance.now();
+    let frameCount = 0;
+    let fpsSampleTime = performance.now();
 
     const animate = () => {
       const now = performance.now();
       const dt = (now - lastTime) / 1000;
       lastTime = now;
+
+      frameCount += 1;
+      if (now - fpsSampleTime >= 500) {
+        const measuredFps = Math.round((frameCount * 1000) / (now - fpsSampleTime));
+        onFpsUpdate?.(measuredFps);
+        frameCount = 0;
+        fpsSampleTime = now;
+      }
 
       const camera = cameraRef.current;
       const scene = sceneRef.current;
@@ -773,7 +813,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [caseId, windSpeed, windAngle, showStreamlines, showPressure, showWake, flowData, showSlicePlane, slicePosition]);
+  }, [caseId, windSpeed, windAngle, showStreamlines, showPressure, showWake, flowData, showSlicePlane, slicePosition, onFpsUpdate]);
 
   return (
     <div className="tunnel-view-container">

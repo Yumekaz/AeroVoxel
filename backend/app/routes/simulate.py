@@ -43,7 +43,13 @@ async def run_simulation(req: SimulateRequest):
         u_inlet = max(0.02, min(0.15, u_inlet)) # keep LBM stable
         
         # Instantiate and run LBM solver
-        solver = LbmSolver2D(nx=128, ny=64, tau=0.6, u_inlet=u_inlet)
+        solver = LbmSolver2D(
+            nx=128,
+            ny=64,
+            tau=0.6,
+            u_inlet=u_inlet,
+            wind_angle_deg=req.wind_angle_deg,
+        )
         # Run solver (600 iterations is plenty for visual convergence at 128x64)
         u, pressure = solver.solve(mask, steps=600)
         
@@ -80,7 +86,8 @@ async def run_simulation(req: SimulateRequest):
             metrics={
                 "drag_coefficient_estimate": drag_coeff,
                 "lift_coefficient_estimate": lift_coeff,
-                "wake_score": wake_score
+                "wake_score": wake_score,
+                "confidence_label": "educational estimate",
             }
         )
     except Exception as e:

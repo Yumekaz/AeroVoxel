@@ -8,6 +8,7 @@ dist-ssr/
 *.local
 .env
 .env.*
+!.env.example
 .vite/
 .eslintcache
 
@@ -33,6 +34,8 @@ backend/app/assets/flow/*.npy
 !backend/app/assets/flow/airfoil_v1_*.npy
 uploads/
 *.log
+terminals/
+backend/verify_mvp.py
 .DS_Store
 .idea/
 .vscode/

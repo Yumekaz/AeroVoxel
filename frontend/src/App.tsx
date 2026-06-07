@@ -1,119 +1,237 @@
-import { useState, useEffect } from 'react';
-import { 
-  Layers, 
-  Upload, 
-  FileVideo, 
-  FileImage, 
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Layers,
+  Upload,
+  FileVideo,
+  FileImage,
   Info,
-  ShieldCheck
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { WindTunnelViewer } from './components/WindTunnelViewer';
 import type { FlowData } from './components/WindTunnelViewer';
+import { LandingScreen } from './components/LandingScreen';
 import { fetchNpy } from './utils/npyLoader';
+import { API_BASE_URL } from './config';
+import type { ActiveCase, ApiDemoCase, DataSource } from './types';
+import { PROCESSING_STEPS, OFFLINE_PREVIEW } from './types';
 import './App.css';
 
-interface DemoCase {
-  id: string;
-  name: string;
-  desc: string;
-  drag: number;
-  lift: number;
-  wake: number;
-  mode: string;
-  explanation: string;
+function toActiveCase(api: ApiDemoCase): ActiveCase {
+  return {
+    id: api.case_id.replace('_v1', ''),
+    backendId: api.case_id,
+    name: api.name,
+    desc: api.description,
+    drag: api.drag_coefficient_estimate,
+    lift: api.lift_coefficient_estimate,
+    wake: api.wake_score,
+    mode: api.mode,
+    modeLabel: api.mode_label,
+    explanation: api.explanation,
+    isCustom: false,
+  };
 }
 
-const DEMO_CASES: DemoCase[] = [
+const FALLBACK_CASES: ActiveCase[] = [
   {
     id: 'sports_car',
+    backendId: 'sports_car_v1',
     name: 'Sports Car (Template)',
     desc: 'Low-drag ground vehicle profile with rear separation.',
     drag: 0.28,
     lift: -0.05,
     wake: 0.65,
-    mode: 'Cached 3D Demo',
-    explanation: 'Air hits the front bumper creating a high-pressure stagnation zone. It accelerates over the hood and windshield (low pressure), then separates rapidly at the rear windshield, creating a low-pressure recirculating wake that sucks the vehicle backward (producing drag).'
+    mode: 'cached_2d',
+    modeLabel: 'Cached 2D demonstration field',
+    explanation:
+      'Air hits the front bumper creating a high-pressure stagnation zone. It accelerates over the hood and windshield (low pressure), then separates at the rear, creating a recirculating wake.',
+    isCustom: false,
   },
   {
     id: 'drone',
+    backendId: 'drone_v1',
     name: 'Quadcopter (Template)',
     desc: 'Complex vertical thrust profile with high drag wake.',
     drag: 1.15,
     lift: 1.42,
     wake: 0.88,
-    mode: 'Cached 3D Demo',
-    explanation: 'Flow encounters bluff-body engine mounts and spinning rotor disks. The arms create severe flow separation and localized vortex shedding, resulting in a large wake turbulence index and substantial drag relative to its frontal area.'
+    mode: 'cached_2d',
+    modeLabel: 'Cached 2D demonstration field',
+    explanation:
+      'Flow encounters bluff-body engine mounts and rotor disks. The arms create flow separation and localized vortex shedding.',
+    isCustom: false,
   },
   {
     id: 'airfoil',
+    backendId: 'airfoil_v1',
     name: 'NACA 0012 Airfoil',
     desc: 'Symmetric streamlined wing section at angle of attack.',
     drag: 0.06,
     lift: 0.45,
     wake: 0.12,
-    mode: 'Cached 3D Demo',
-    explanation: 'The classic aerodynamic profile. Flow remains attached to the smooth surface for almost the entire chord length. Curvature differences create asymmetric pressure (higher velocity on top = lower pressure = upward lift force) with a minimal wake profile.'
-  }
+    mode: 'cached_2d',
+    modeLabel: 'Cached 2D demonstration field',
+    explanation:
+      'Flow remains attached to the smooth surface for most of the chord. Curvature differences create asymmetric pressure with a minimal wake profile.',
+    isCustom: false,
+  },
 ];
 
 function App() {
-  const [selectedCase, setSelectedCase] = useState<DemoCase>(DEMO_CASES[0]);
-  const [windSpeed, setWindSpeed] = useState<number>(15); // m/s
-  const [windAngle, setWindAngle] = useState<number>(0); // degrees
-  
-  // Toggles
-  const [showStreamlines, setShowStreamlines] = useState<boolean>(true);
-  const [showPressure, setShowPressure] = useState<boolean>(true);
-  const [showWake, setShowWake] = useState<boolean>(true);
-  
-  // Backend connection state
-  const [backendStatus, setBackendStatus] = useState<'connected' | 'disconnected'>('disconnected');
-  
-  // Ingestion & solver state (Phases 3-4)
-  const [uploading, setUploading] = useState<boolean>(false);
-  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
-  const [processingStep, setProcessingStep] = useState<string>('');
-  const [contourPreview, setContourPreview] = useState<string | null>(null);
-  const [simMode, setSimMode] = useState<string>('Cached 3D Demo');
+  const [showLanding, setShowLanding] = useState(true);
+  const [demoCases, setDemoCases] = useState<ActiveCase[]>(FALLBACK_CASES);
+  const [selectedCase, setSelectedCase] = useState<ActiveCase>(FALLBACK_CASES[0]);
+  const [windSpeed, setWindSpeed] = useState(15);
+  const [windAngle, setWindAngle] = useState(0);
 
-  // Flow Field binary data arrays (Phase 2)
+  const [showStreamlines, setShowStreamlines] = useState(true);
+  const [showPressure, setShowPressure] = useState(true);
+  const [showWake, setShowWake] = useState(true);
+  const [showVoxels, setShowVoxels] = useState(false);
+  const [showSlicePlane, setShowSlicePlane] = useState(false);
+  const [slicePosition, setSlicePosition] = useState(0.0);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+
+  const [backendStatus, setBackendStatus] = useState<'connected' | 'disconnected'>('disconnected');
+  const [dataSource, setDataSource] = useState<DataSource>('cached');
+  const [simModeLabel, setSimModeLabel] = useState('Cached 2D demonstration field');
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  const [processingStepIndex, setProcessingStepIndex] = useState(0);
+  const [contourPreview, setContourPreview] = useState<string | null>(null);
+  const [scaleEstimate, setScaleEstimate] = useState<number | null>(null);
+  const [scaleStatus, setScaleStatus] = useState<string | null>(null);
+
   const [flowData, setFlowData] = useState<FlowData | null>(null);
-  const [loadingFlowData, setLoadingFlowData] = useState<boolean>(false);
+  const [loadingFlowData, setLoadingFlowData] = useState(false);
   const [closestPreset, setClosestPreset] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [runningSolver, setRunningSolver] = useState<boolean>(false);
+  const [runningSolver, setRunningSolver] = useState(false);
+  const [solverReady, setSolverReady] = useState(false);
+  const [lastSolverAngle, setLastSolverAngle] = useState<number | null>(null);
 
-  // Phase 5 Voxel & Slicing states
-  const [showVoxels, setShowVoxels] = useState<boolean>(false);
-  const [showSlicePlane, setShowSlicePlane] = useState<boolean>(false);
-  const [slicePosition, setSlicePosition] = useState<number>(0.0);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [fps, setFps] = useState(60);
+
+  const loadFlowForCase = useCallback(
+    async (activeCase: ActiveCase, presetOverride?: string | null) => {
+      if (backendStatus !== 'connected') {
+        setFlowData(null);
+        return;
+      }
+
+      setLoadingFlowData(true);
+      try {
+        let backendCaseId = activeCase.backendId;
+        if (activeCase.isCustom) {
+          const preset = presetOverride ?? closestPreset;
+          if (!preset) {
+            setFlowData(null);
+            return;
+          }
+          backendCaseId = preset;
+        }
+
+        const metaResponse = await fetch(`${API_BASE_URL}/api/flow-field/${backendCaseId}`);
+        if (!metaResponse.ok) throw new Error('Failed to load metadata');
+        const meta = await metaResponse.json();
+
+        const [velNpy, pressNpy, maskNpy] = await Promise.all([
+          fetchNpy(`${API_BASE_URL}${meta.velocity_url}`),
+          fetchNpy(`${API_BASE_URL}${meta.pressure_url}`),
+          fetchNpy(`${API_BASE_URL}${meta.mask_url}`),
+        ]);
+
+        setFlowData({
+          velocity: velNpy.data as Float32Array,
+          pressure: pressNpy.data as Float32Array,
+          mask: maskNpy.data as Uint8Array,
+          nx: velNpy.shape[2],
+          ny: velNpy.shape[1],
+        });
+
+        if (!activeCase.isCustom) {
+          setSimModeLabel(meta.mode_label ?? 'Cached 2D demonstration field');
+          setDataSource('cached');
+        }
+      } catch (err) {
+        console.error('Error loading flow arrays:', err);
+        setFlowData(null);
+      } finally {
+        setLoadingFlowData(false);
+      }
+    },
+    [backendStatus, closestPreset]
+  );
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        setBackendStatus(response.ok ? 'connected' : 'disconnected');
+      } catch {
+        setBackendStatus('disconnected');
+      }
+    };
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (backendStatus !== 'connected') return;
+
+    const fetchCases = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/demo-cases`);
+        if (!response.ok) return;
+        const cases: ApiDemoCase[] = await response.json();
+        const mapped = cases.map(toActiveCase);
+        setDemoCases(mapped);
+        if (!selectedCase.isCustom) {
+          setSelectedCase((prev) => mapped.find((c) => c.backendId === prev.backendId) ?? mapped[0]);
+        }
+      } catch (err) {
+        console.warn('Failed to load demo cases from API, using fallback list.', err);
+      }
+    };
+
+    fetchCases();
+  }, [backendStatus]);
+
+  useEffect(() => {
+    if (dataSource === 'computed') return;
+    if (selectedCase.isCustom && !closestPreset) return;
+    loadFlowForCase(selectedCase);
+  }, [selectedCase, backendStatus, closestPreset, dataSource, loadFlowForCase]);
 
   const runLiveSimulation = async () => {
     if (!activeJobId) return;
     setRunningSolver(true);
-    setSimMode('Solving Fluid Fields...');
+    setSimModeLabel('Running educational 2D LBM solver…');
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/simulate/simple', {
+      const response = await fetch(`${API_BASE_URL}/api/simulate/simple`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           job_id: activeJobId,
           wind_speed: windSpeed,
-          wind_angle_deg: windAngle
+          wind_angle_deg: windAngle,
         }),
       });
 
       if (!response.ok) throw new Error('Simulation failed');
       const res = await response.json();
 
-      const host = 'http://127.0.0.1:8000';
       const [velNpy, pressNpy, maskNpy] = await Promise.all([
-        fetchNpy(host + res.velocity_url),
-        fetchNpy(host + res.pressure_url),
-        fetchNpy(host + res.mask_url)
+        fetchNpy(`${API_BASE_URL}${res.velocity_url}`),
+        fetchNpy(`${API_BASE_URL}${res.pressure_url}`),
+        fetchNpy(`${API_BASE_URL}${res.mask_url}`),
       ]);
 
       setFlowData({
@@ -121,116 +239,88 @@ function App() {
         pressure: pressNpy.data as Float32Array,
         mask: maskNpy.data as Uint8Array,
         nx: velNpy.shape[2],
-        ny: velNpy.shape[1]
+        ny: velNpy.shape[1],
       });
 
-      setSimMode('2D Solver Completed');
-      
-      const solvedCase: DemoCase = {
-        id: 'custom_upload',
-        name: selectedCase.name,
-        desc: selectedCase.desc,
+      setDataSource('computed');
+      setSimModeLabel('Educational 2D LBM solver output');
+      setLastSolverAngle(windAngle);
+      setSolverReady(false);
+
+      setSelectedCase((prev) => ({
+        ...prev,
         drag: res.metrics.drag_coefficient_estimate,
         lift: res.metrics.lift_coefficient_estimate,
         wake: res.metrics.wake_score,
-        mode: '2D Solver Runs (CPU)',
-        explanation: `CFD calculations converged in 600 steps! The streamline particles are now deflecting along the computed velocity fields. Drag coefficient estimated at ${res.metrics.drag_coefficient_estimate.toFixed(2)}, lift force at ${res.metrics.lift_coefficient_estimate.toFixed(2)}.`
-      };
-      setSelectedCase(solvedCase);
+        mode: 'simple_solver',
+        modeLabel: 'Educational 2D LBM solver output',
+        explanation: `The 2D LBM solver converged in 600 steps on your uploaded silhouette. Approximate drag coefficient: ${res.metrics.drag_coefficient_estimate.toFixed(2)}. Lift estimate: ${res.metrics.lift_coefficient_estimate.toFixed(2)}. These are educational-style metrics, not certified aerodynamic coefficients.`,
+      }));
     } catch (err) {
       console.error('Simulation run failed:', err);
-      setSimMode('2D Solver Failed');
+      setSimModeLabel('2D LBM solver failed — showing closest cached field');
+      setDataSource('cached');
+      if (closestPreset) loadFlowForCase(selectedCase, closestPreset);
     } finally {
       setRunningSolver(false);
     }
   };
 
-  // Ping backend health check on mount
-  useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:8000/health');
-        if (response.ok) {
-          setBackendStatus('connected');
-        } else {
-          setBackendStatus('disconnected');
-        }
-      } catch (err) {
-        setBackendStatus('disconnected');
-      }
-    };
-    checkHealth();
-    // Re-check every 8 seconds
-    const interval = setInterval(checkHealth, 8000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Fetch LBM binary datasets from the backend (Phase 2 Engine)
-  useEffect(() => {
-    if (backendStatus !== 'connected') {
-      setFlowData(null);
-      return;
-    }
-
-    const loadFlowArrays = async () => {
-      setLoadingFlowData(true);
-      try {
-        let backendCaseId = selectedCase.id;
-        if (backendCaseId === 'custom_upload') {
-          if (!closestPreset) {
-            setFlowData(null);
-            setLoadingFlowData(false);
-            return;
-          }
-          backendCaseId = closestPreset;
-        } else {
-          // Map to exact API case IDs
-          if (backendCaseId === 'sports_car') backendCaseId = 'sports_car_v1';
-          else if (backendCaseId === 'drone') backendCaseId = 'drone_v1';
-          else if (backendCaseId === 'airfoil') backendCaseId = 'airfoil_v1';
-        }
-
-        const metadataUrl = `http://127.0.0.1:8000/api/flow-field/${backendCaseId}`;
-        const metaResponse = await fetch(metadataUrl);
-        if (!metaResponse.ok) throw new Error('Failed to load metadata');
-        const meta = await metaResponse.json();
-
-        // Download the arrays
-        const host = 'http://127.0.0.1:8000';
-        const [velNpy, pressNpy, maskNpy] = await Promise.all([
-          fetchNpy(host + meta.velocity_url),
-          fetchNpy(host + meta.pressure_url),
-          fetchNpy(host + meta.mask_url)
-        ]);
-
-        setFlowData({
-          velocity: velNpy.data as Float32Array,
-          pressure: pressNpy.data as Float32Array,
-          mask: maskNpy.data as Uint8Array,
-          nx: velNpy.shape[2], // (2, ny, nx)
-          ny: velNpy.shape[1]
-        });
-      } catch (err) {
-        console.error('Error loading flow arrays:', err);
-        setFlowData(null);
-      } finally {
-        setLoadingFlowData(false);
-      }
+  const runMockUploadFlow = (file: File) => {
+    setProcessingStepIndex(0);
+    const advance = (step: number, delay: number, done: () => void) => {
+      setTimeout(() => {
+        setProcessingStepIndex(step);
+        done();
+      }, delay);
     };
 
-    loadFlowArrays();
-  }, [selectedCase.id, backendStatus, closestPreset]);
+    advance(1, 800, () =>
+      advance(2, 800, () =>
+        advance(3, 800, () => {
+          setUploading(false);
+          setContourPreview(OFFLINE_PREVIEW);
+          setClosestPreset('sports_car_v1');
+          setActiveJobId(null);
+          setSolverReady(false);
+          setDataSource('offline_fallback');
+          setSimModeLabel('Offline fallback (cached template)');
+          setScaleEstimate(null);
+          setScaleStatus('Offline mode — scale not detected');
 
-  // Real file upload to backend with cv processing and preset matching (Phase 3)
+          setSelectedCase({
+            id: 'custom_upload',
+            backendId: 'custom_upload',
+            name: `Offline: ${file.name.substring(0, 16)}`,
+            desc: 'Matched to sports car template (offline fallback).',
+            drag: 0.28,
+            lift: -0.05,
+            wake: 0.65,
+            mode: 'cached_2d',
+            modeLabel: 'Offline fallback (cached template)',
+            explanation:
+              'Backend unavailable. AeroVoxel matched your upload to the cached sports car demonstration field so the demo keeps running.',
+            isCustom: true,
+          });
+        })
+      )
+    );
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setShowLanding(false);
     setUploading(true);
     setUploadedFile(file.name);
     setContourPreview(null);
     setClosestPreset(null);
-    setProcessingStep('Uploading file to server...');
+    setActiveJobId(null);
+    setSolverReady(false);
+    setDataSource('cached');
+    setProcessingStepIndex(0);
+    setLastSolverAngle(null);
 
     if (backendStatus !== 'connected') {
       runMockUploadFlow(file);
@@ -241,8 +331,8 @@ function App() {
     formData.append('file', file);
 
     try {
-      setProcessingStep('Extracting keyframe & boundaries...');
-      const response = await fetch('http://127.0.0.1:8000/api/upload', {
+      setProcessingStepIndex(1);
+      const response = await fetch(`${API_BASE_URL}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -250,120 +340,137 @@ function App() {
       if (!response.ok) throw new Error('Upload failed');
       const res = await response.json();
 
-      setUploading(false);
+      setProcessingStepIndex(2);
       setClosestPreset(res.closest_preset);
       setActiveJobId(res.job_id);
-      setContourPreview('http://127.0.0.1:8000' + res.preview_url);
-      setSimMode('2D Solver Ready');
+      setContourPreview(`${API_BASE_URL}${res.preview_url}`);
+      setScaleEstimate(res.scale_estimate);
+      setScaleStatus(res.scale_status);
+      setProcessingStepIndex(3);
+      setSolverReady(true);
+      setSimModeLabel('Upload processed — ready for 2D LBM solver');
 
-      const customCase: DemoCase = {
+      const presetCase = demoCases.find((c) => c.backendId === res.closest_preset);
+
+      setSelectedCase({
         id: 'custom_upload',
-        name: `Upload: ${res.filename.substring(0, 12)}`,
-        desc: `Custom shape. Scale: ${res.scale_estimate.toFixed(3)} mm/px.`,
-        drag: res.closest_preset === 'sports_car_v1' ? 0.28 : res.closest_preset === 'drone_v1' ? 1.15 : 0.06,
-        lift: res.closest_preset === 'airfoil_v1' ? 0.45 : 0.00,
-        wake: res.closest_preset === 'drone_v1' ? 0.88 : 0.65,
-        mode: '2D Solver Ready (CPU)',
-        explanation: `${res.detected_object}. ${res.scale_status}. Under Phase 3, this shape is matched to the closest template flow field. Run LBM simulation to calculate live 2D fluid velocities for this shape!`
-      };
-      setSelectedCase(customCase);
+        backendId: 'custom_upload',
+        name: `Upload: ${res.filename.substring(0, 16)}`,
+        desc: `Matched to ${presetCase?.name ?? res.closest_preset}. Scale: ${res.scale_estimate.toFixed(3)} mm/px.`,
+        drag: presetCase?.drag ?? 0.28,
+        lift: presetCase?.lift ?? 0.0,
+        wake: presetCase?.wake ?? 0.65,
+        mode: 'upload_ready',
+        modeLabel: 'Upload processed — ready for 2D LBM solver',
+        explanation: `${res.detected_object}. ${res.scale_status}. Run the educational 2D LBM solver to compute flow for your silhouette. Until then, the closest cached template field is shown.`,
+        isCustom: true,
+      });
+
+      await loadFlowForCase(
+        { ...FALLBACK_CASES[0], isCustom: true, backendId: 'custom_upload' },
+        res.closest_preset
+      );
     } catch (err) {
-      console.warn('Real upload failed, falling back to mock flow:', err);
+      console.warn('Real upload failed, falling back to offline mode:', err);
       runMockUploadFlow(file);
+    } finally {
+      setUploading(false);
     }
   };
 
-  const runMockUploadFlow = (file: File) => {
-    setProcessingStep('Extracting keyframe (Mock)...');
-    setTimeout(() => {
-      setProcessingStep('Detecting calibration card marker (Mock)...');
-      setTimeout(() => {
-        setProcessingStep('Computing binary boundary silhouette (Mock)...');
-        setContourPreview('https://images.unsplash.com/photo-1542282088-72c9c27ed0cd?q=80&w=400&auto=format&fit=crop');
-        setTimeout(() => {
-          setUploading(false);
-          setProcessingStep('');
-          setClosestPreset('sports_car_v1');
-          setSimMode('Cached 3D Demo (Mock)');
-
-          const customCase: DemoCase = {
-            id: 'custom_upload',
-            name: `Mock: ${file.name.substring(0, 12)}`,
-            desc: 'Ground vehicle approximation (Offline Fallback).',
-            drag: 0.35,
-            lift: -0.01,
-            wake: 0.70,
-            mode: 'Cached 3D Demo (Mock)',
-            explanation: 'Running in offline fallback mode. The shape was matched to a standard ground vehicle template, displaying approximate cached flow vectors.'
-          };
-          setSelectedCase(customCase);
-        }, 1200);
-      }, 1200);
-    }, 1200);
-  };
-
   const resetToPresets = () => {
-    setSelectedCase(DEMO_CASES[0]);
+    setSelectedCase(demoCases[0] ?? FALLBACK_CASES[0]);
     setUploadedFile(null);
     setContourPreview(null);
     setClosestPreset(null);
     setActiveJobId(null);
-    setSimMode('Cached 3D Demo');
+    setSolverReady(false);
+    setDataSource('cached');
+    setSimModeLabel('Cached 2D demonstration field');
+    setScaleEstimate(null);
+    setScaleStatus(null);
+    setLastSolverAngle(null);
     setShowVoxels(false);
     setShowSlicePlane(false);
     setSlicePosition(0.0);
   };
 
+  const enterDashboard = (mode: 'demo' | 'upload') => {
+    setShowLanding(false);
+    if (mode === 'upload') {
+      uploadInputRef.current?.click();
+    }
+  };
+
+  const angleNeedsRerun =
+    dataSource === 'computed' &&
+    lastSolverAngle !== null &&
+    Math.abs(lastSolverAngle - windAngle) > 0.5;
+
+  if (showLanding) {
+    return (
+      <>
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept="image/*,video/*"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+        <LandingScreen
+          onTryDemo={() => {
+            setShowLanding(false);
+            resetToPresets();
+          }}
+          onUpload={() => enterDashboard('upload')}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="app-container">
-      {/* Header */}
       <header className="app-header">
         <div className="logo-container">
           <div className="logo-icon">AV</div>
           <span className="logo-text">AeroVoxel</span>
-          <span className="logo-badge">V1.0 MVP</span>
+          <span className="logo-badge">MVP</span>
         </div>
         <div className="header-status">
           <div className="status-indicator">
-            <span className={`status-dot ${backendStatus === 'connected' ? 'connected' : ''}`}></span>
-            {backendStatus === 'connected' ? 'Backend Engine Connected' : 'Running Offline Mode (Fallback)'}
+            <span className={`status-dot ${backendStatus === 'connected' ? 'connected' : ''}`} />
+            {backendStatus === 'connected'
+              ? 'Backend Connected'
+              : 'Offline Mode — Cached Fallback Active'}
           </div>
         </div>
       </header>
 
-      {/* Main Grid */}
       <main className="dashboard-grid">
-        {/* Left Sidebar - Inputs and Presets */}
         <section className="sidebar">
-          {/* Preset Cases Selector */}
           <div className="panel-card">
             <h3 className="panel-card-title">
               <span>Simulation Input</span>
               {uploadedFile && (
-                <button 
-                  onClick={resetToPresets} 
-                  style={{ 
-                    background: 'rgba(255, 67, 87, 0.1)', 
-                    border: '1px solid rgba(255, 67, 87, 0.3)', 
-                    color: 'var(--accent-red)',
-                    fontSize: '10px',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
+                <button type="button" className="reset-btn" onClick={resetToPresets}>
                   Reset
                 </button>
               )}
             </h3>
-            
+
             {!uploadedFile ? (
               <div className="preset-list">
-                {DEMO_CASES.map((c) => (
+                {demoCases.map((c) => (
                   <button
-                    key={c.id}
-                    className={`preset-button ${selectedCase.id === c.id ? 'active' : ''}`}
-                    onClick={() => setSelectedCase(c)}
+                    key={c.backendId}
+                    type="button"
+                    className={`preset-button ${selectedCase.backendId === c.backendId ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedCase(c);
+                      setDataSource('cached');
+                      setSimModeLabel(c.modeLabel);
+                      setLastSolverAngle(null);
+                    }}
                   >
                     <div>
                       <div className="preset-name">{c.name}</div>
@@ -374,16 +481,14 @@ function App() {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                Currently showing custom uploaded silhouette analysis. Reset to select standard template cases.
-              </div>
+              <p className="sidebar-note">
+                Custom upload active. Reset to return to template demo cases.
+              </p>
             )}
           </div>
 
-          {/* Interactive Tunnel Controls */}
           <div className="panel-card">
             <h3 className="panel-card-title">Wind Tunnel Params</h3>
-            
             <div className="control-group">
               <div className="control-label">
                 <span>Inlet Wind Velocity</span>
@@ -398,7 +503,6 @@ function App() {
                 onChange={(e) => setWindSpeed(Number(e.target.value))}
               />
             </div>
-
             <div className="control-group">
               <div className="control-label">
                 <span>Angle of Attack</span>
@@ -412,55 +516,24 @@ function App() {
                 value={windAngle}
                 onChange={(e) => setWindAngle(Number(e.target.value))}
               />
+              {dataSource === 'computed' && angleNeedsRerun && (
+                <p className="control-hint">Re-run LBM solver to apply new angle to flow field.</p>
+              )}
+              {dataSource === 'cached' && (
+                <p className="control-hint">Cached fields: angle rotates the 3D view. Run LBM after upload for angled inlet flow.</p>
+              )}
             </div>
           </div>
 
-          {/* Visualization Layer Toggles */}
           <div className="panel-card">
             <h3 className="panel-card-title">Visual Overlays</h3>
-            
-            <div 
-              className={`toggle-item ${showStreamlines ? 'active' : ''}`}
-              onClick={() => setShowStreamlines(!showStreamlines)}
-            >
-              <span className="toggle-label">Flow Streamlines</span>
-              <div className="toggle-switch"></div>
-            </div>
-
-            <div 
-              className={`toggle-item ${showPressure ? 'active' : ''}`}
-              onClick={() => setShowPressure(!showPressure)}
-            >
-              <span className="toggle-label">Pressure Scalar Map</span>
-              <div className="toggle-switch"></div>
-            </div>
-
-            <div 
-              className={`toggle-item ${showWake ? 'active' : ''}`}
-              onClick={() => setShowWake(!showWake)}
-            >
-              <span className="toggle-label">Wake Turbulence Jitter</span>
-              <div className="toggle-switch"></div>
-            </div>
-
-            <div 
-              className={`toggle-item ${showVoxels ? 'active' : ''}`}
-              onClick={() => setShowVoxels(!showVoxels)}
-            >
-              <span className="toggle-label">Voxelized Geometry View</span>
-              <div className="toggle-switch"></div>
-            </div>
-
-            <div 
-              className={`toggle-item ${showSlicePlane ? 'active' : ''}`}
-              onClick={() => setShowSlicePlane(!showSlicePlane)}
-            >
-              <span className="toggle-label">Enable Cross-Section Slicer</span>
-              <div className="toggle-switch"></div>
-            </div>
-
+            <ToggleRow label="Flow Streamlines" active={showStreamlines} onToggle={() => setShowStreamlines(!showStreamlines)} />
+            <ToggleRow label="Pressure Scalar Map" active={showPressure} onToggle={() => setShowPressure(!showPressure)} />
+            <ToggleRow label="Wake Turbulence Jitter" active={showWake} onToggle={() => setShowWake(!showWake)} />
+            <ToggleRow label="Voxelized Geometry View" active={showVoxels} onToggle={() => setShowVoxels(!showVoxels)} />
+            <ToggleRow label="Cross-Section Slicer" active={showSlicePlane} onToggle={() => setShowSlicePlane(!showSlicePlane)} />
             {showSlicePlane && (
-              <div className="control-group" style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+              <div className="control-group slice-control">
                 <div className="control-label">
                   <span>Slice Plane Height (Y)</span>
                   <span className="control-value">{slicePosition.toFixed(1)} m</span>
@@ -479,8 +552,7 @@ function App() {
           </div>
         </section>
 
-        {/* Central Wind Tunnel Viewport */}
-        <section style={{ position: 'relative', height: '100%' }}>
+        <section className="viewer-section">
           <WindTunnelViewer
             caseId={selectedCase.id}
             windSpeed={windSpeed}
@@ -492,164 +564,198 @@ function App() {
             showVoxels={showVoxels}
             showSlicePlane={showSlicePlane}
             slicePosition={slicePosition}
+            onFpsUpdate={setFps}
           />
 
-          {/* Overlay Badges */}
           <div className="viewer-overlay-left">
-            <div className={`mode-badge ${simMode.includes('Demo') ? 'cached' : 'computed'}`}>
+            <div className={`mode-badge ${dataSource === 'computed' ? 'computed' : 'cached'}`}>
               <Layers size={13} />
-              <span>{simMode} {loadingFlowData ? '(Syncing...)' : ''}</span>
+              <span>
+                {simModeLabel}
+                {loadingFlowData ? ' (loading…)' : ''}
+              </span>
             </div>
-            {selectedCase.id === 'custom_upload' && (
-              <div className="mode-badge" style={{ borderColor: 'var(--accent-orange)', color: 'var(--accent-orange)' }}>
+            {selectedCase.isCustom && scaleStatus && (
+              <div className="mode-badge scale-badge">
                 <ShieldCheck size={13} />
-                <span>2D Scale Extracted (1:18)</span>
+                <span>
+                  {scaleEstimate !== null
+                    ? `Scale: ${scaleEstimate.toFixed(3)} mm/px`
+                    : scaleStatus}
+                </span>
               </div>
             )}
           </div>
 
           <div className="viewer-overlay-right">
-            <div style={{ 
-              background: 'rgba(10, 11, 16, 0.85)', 
-              border: '1px solid var(--border-color)', 
-              borderRadius: '8px', 
-              padding: '8px 12px',
-              fontSize: '11px',
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-secondary)'
-            }}>
-              FPS: 60 | WebGL Render Pipeline
-            </div>
+            <div className="fps-badge">FPS: {fps} · WebGL</div>
           </div>
         </section>
 
-        {/* Right Sidebar - Analytics and Upload */}
         <section className="sidebar-right">
-          {/* Real-world Upload Section */}
           <div className="panel-card">
             <h3 className="panel-card-title">Ingest Object Video/Image</h3>
-            
+
             {!uploading && !uploadedFile ? (
               <label className="upload-dropzone">
                 <Upload className="upload-icon" size={28} />
                 <span className="upload-text">Upload Smartphone Capture</span>
-                <span className="upload-subtext">Supports MP4, MOV, JPG (Max 50MB)</span>
-                <input 
-                  type="file" 
-                  accept="image/*,video/*" 
-                  onChange={handleFileUpload} 
-                  style={{ display: 'none' }} 
+                <span className="upload-subtext">MP4, MOV, JPG, PNG · Max 50MB</span>
+                <span className="upload-tip">
+                  Tip: place a credit card next to the object for scale calibration.
+                </span>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
                 />
               </label>
             ) : uploading || runningSolver ? (
               <div className="processing-box">
-                <div className="spinner"></div>
+                <div className="spinner" />
                 <div className="processing-title">
-                  {runningSolver ? 'Navier-Stokes Solver' : 'Computer Vision Pipeline'}
+                  {runningSolver ? '2D LBM Solver' : 'Computer Vision Pipeline'}
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                  {runningSolver ? 'Solving 2D Lattice Boltzmann equations (600 steps)...' : processingStep}
-                </div>
+                {runningSolver ? (
+                  <p className="processing-subtext">
+                    Running educational 2D lattice Boltzmann solver (600 steps)…
+                  </p>
+                ) : (
+                  <>
+                    <div className="processing-steps">
+                      {PROCESSING_STEPS.map((step, i) => (
+                        <div
+                          key={step}
+                          className={`processing-step ${i <= processingStepIndex ? 'done' : ''} ${i === processingStepIndex ? 'active' : ''}`}
+                        >
+                          <span className="step-dot" />
+                          {step}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
-              <div className="processing-box" style={{ borderColor: 'var(--border-focus)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                  {uploadedFile?.endsWith('.mp4') || uploadedFile?.endsWith('.mov') ? (
+              <div className="processing-box upload-complete">
+                <div className="upload-file-row">
+                  {uploadedFile?.match(/\.(mp4|mov)$/i) ? (
                     <FileVideo size={20} color="var(--accent-cyan)" />
                   ) : (
                     <FileImage size={20} color="var(--accent-cyan)" />
                   )}
-                  <span style={{ fontSize: '12px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {uploadedFile}
-                  </span>
+                  <span className="upload-filename">{uploadedFile}</span>
                 </div>
                 {contourPreview && (
                   <>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', alignSelf: 'flex-start' }}>
-                      Extracted Contour Preview:
-                    </div>
-                    <img src={contourPreview} alt="Contour Extract" className="contour-preview" />
+                    <span className="preview-label">Extracted contour preview</span>
+                    <img src={contourPreview} alt="Contour preview" className="contour-preview" />
                   </>
                 )}
-                <div style={{ fontSize: '11px', color: 'var(--accent-neon)', fontWeight: 500 }}>
-                  Active Silhouette Analysis
-                </div>
                 {activeJobId && (
-                  <div style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                    Job ID: {activeJobId.substring(0, 8)}...
-                  </div>
+                  <span className="job-id">Job: {activeJobId.substring(0, 8)}…</span>
                 )}
-                {simMode === '2D Solver Ready' && (
-                  <button 
-                    onClick={runLiveSimulation}
-                    style={{
-                      marginTop: '10px',
-                      background: 'linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))',
-                      border: 'none',
-                      color: '#000',
-                      fontWeight: 700,
-                      fontSize: '12px',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      width: '100%',
-                      boxShadow: 'var(--glow-cyan)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    Run Live LBM Simulation
+                {solverReady && backendStatus === 'connected' && (
+                  <button type="button" className="run-solver-btn" onClick={runLiveSimulation}>
+                    Run 2D LBM Simulation
+                  </button>
+                )}
+                {angleNeedsRerun && (
+                  <button type="button" className="run-solver-btn secondary" onClick={runLiveSimulation}>
+                    Re-run with new angle ({windAngle}°)
                   </button>
                 )}
               </div>
             )}
           </div>
 
-          {/* Aerodynamic Coefficients */}
           <div className="panel-card">
             <h3 className="panel-card-title">Aerodynamic Estimates</h3>
-            
             <div className="metrics-grid">
-              <div className="metric-box">
-                <span className="metric-lbl">Drag Coefficient (Cd)</span>
-                <span className={`metric-val ${selectedCase.id === 'custom_upload' ? 'estimate' : ''}`}>
-                  {selectedCase.drag.toFixed(2)}
-                </span>
-                <span className="metric-desc">Air resistance factor (Lower is more streamlined)</span>
-              </div>
-
-              <div className="metric-box">
-                <span className="metric-lbl">Wake Turbulence Index</span>
-                <span className="metric-val" style={{ color: 'var(--accent-purple)' }}>
-                  {selectedCase.wake.toFixed(2)}
-                </span>
-                <span className="metric-desc">Fluctuating low-pressure separation zone size</span>
-              </div>
-
-              <div className="metric-box">
-                <span className="metric-lbl">Lift Coefficient (Cl)</span>
-                <span className="metric-val" style={{ color: 'var(--accent-neon)' }}>
-                  {selectedCase.lift >= 0 ? `+${selectedCase.lift.toFixed(2)}` : selectedCase.lift.toFixed(2)}
-                </span>
-                <span className="metric-desc">Vertical force perpendicular to flow direction</span>
-              </div>
+              <MetricBox
+                label="Drag Coefficient (Cd)"
+                value={selectedCase.drag.toFixed(2)}
+                desc="Approximate air resistance estimate (educational)"
+                highlight={selectedCase.isCustom}
+              />
+              <MetricBox
+                label="Wake Turbulence Index"
+                value={selectedCase.wake.toFixed(2)}
+                desc="Low-pressure separation zone indicator"
+                color="var(--accent-purple)"
+              />
+              <MetricBox
+                label="Lift Coefficient (Cl)"
+                value={
+                  selectedCase.lift >= 0
+                    ? `+${selectedCase.lift.toFixed(2)}`
+                    : selectedCase.lift.toFixed(2)
+                }
+                desc="Approximate vertical force estimate (educational)"
+                color="var(--accent-neon)"
+              />
             </div>
           </div>
 
-          {/* Scientific Explanations */}
           <div className="panel-card">
             <h3 className="panel-card-title">Physics Breakdown</h3>
             <div className="explanation-text">
               <p>{selectedCase.explanation}</p>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '12px', background: 'rgba(255,255,255,0.02)', padding: '8px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                <Info size={16} color="var(--accent-cyan)" style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                  Metrics and flow separations are based on educational calculations and are for prototyping visualization purposes.
+              <div className="honesty-callout">
+                <Info size={16} color="var(--accent-cyan)" />
+                <span>
+                  Metrics are approximate educational estimates for prototyping visualization —
+                  not certified aerodynamic coefficients.
                 </span>
               </div>
             </div>
+          </div>
+
+          <div className="panel-card">
+            <button
+              type="button"
+              className="technical-toggle"
+              onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+            >
+              <span>Technical Details</span>
+              {showTechnicalDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            {showTechnicalDetails && (
+              <div className="technical-details">
+                <DetailRow label="Simulation mode" value={simModeLabel} />
+                <DetailRow label="Grid resolution" value="128 × 64 (2D)" />
+                <DetailRow
+                  label="Data source"
+                  value={
+                    dataSource === 'computed'
+                      ? 'Live 2D LBM solver'
+                      : dataSource === 'offline_fallback'
+                        ? 'Offline cached fallback'
+                        : 'Precomputed demonstration field'
+                  }
+                />
+                <DetailRow label="Wind speed" value={`${windSpeed} m/s`} />
+                <DetailRow
+                  label="Wind angle"
+                  value={
+                    dataSource === 'computed' && lastSolverAngle !== null
+                      ? `${lastSolverAngle}° (applied to solver inlet)`
+                      : `${windAngle}° (visual / pending solver run)`
+                  }
+                />
+                <div className="limitations-block">
+                  <strong>Known limitations</strong>
+                  <ul>
+                    <li>2D educational simulation — not full 3D CFD</li>
+                    <li>3D object geometry is illustrative, not reconstructed from video</li>
+                    <li>Uploads map to closest template until LBM solver runs</li>
+                    <li>Drag/lift values are heuristic estimates, not wind-tunnel validated</li>
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </main>
@@ -657,10 +763,59 @@ function App() {
   );
 }
 
-// Inline Icon Components for simple bundling
+function ToggleRow({
+  label,
+  active,
+  onToggle,
+}: {
+  label: string;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className={`toggle-item ${active ? 'active' : ''}`} onClick={onToggle}>
+      <span className="toggle-label">{label}</span>
+      <div className="toggle-switch" />
+    </div>
+  );
+}
+
+function MetricBox({
+  label,
+  value,
+  desc,
+  highlight,
+  color,
+}: {
+  label: string;
+  value: string;
+  desc: string;
+  highlight?: boolean;
+  color?: string;
+}) {
+  return (
+    <div className="metric-box">
+      <span className="metric-lbl">{label}</span>
+      <span className={`metric-val ${highlight ? 'estimate' : ''}`} style={color ? { color } : undefined}>
+        {value}
+      </span>
+      <span className="metric-desc">{desc}</span>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detail-row">
+      <span className="detail-label">{label}</span>
+      <span className="detail-value">{value}</span>
+    </div>
+  );
+}
+
 const ChevronRightIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m9 18 6-6-6-6"/>
+    <path d="m9 18 6-6-6-6" />
   </svg>
 );
 
