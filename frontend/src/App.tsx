@@ -129,8 +129,39 @@ function App() {
   const [solverReady, setSolverReady] = useState(false);
   const [lastSolverAngle, setLastSolverAngle] = useState<number | null>(null);
 
+  // Educational ML surrogate (parallel to LBM — does not replace live solver)
+  const [surrogateAvailable, setSurrogateAvailable] = useState<boolean | null>(null);
+  const [surrogateHint, setSurrogateHint] = useState<string | null>(null);
+  const [surrogateStatusDisclaimer, setSurrogateStatusDisclaimer] = useState<string | null>(null);
+  const [maskForSurrogate, setMaskForSurrogate] = useState<{
+    flat: number[];
+    nx: number;
+    ny: number;
+  } | null>(null);
+  const [surrogateLoading, setSurrogateLoading] = useState(false);
+  const [surrogateError, setSurrogateError] = useState<string | null>(null);
+  const [surrogatePred, setSurrogatePred] = useState<{
+    cd: number;
+    model: string;
+    disclaimer: string;
+  } | null>(null);
+
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [fps, setFps] = useState(60);
+
+  const storeMaskForSurrogate = useCallback(
+    (data: ArrayLike<number>, nx: number, ny: number) => {
+      const n = nx * ny;
+      const flat = new Array<number>(n);
+      for (let i = 0; i < n; i++) {
+        flat[i] = Number(data[i]) > 0.5 ? 1 : 0;
+      }
+      setMaskForSurrogate({ flat, nx, ny });
+      setSurrogatePred(null);
+      setSurrogateError(null);
+    },
+    []
+  );
 
   const loadFlowForCase = useCallback(
     async (activeCase: ActiveCase, presetOverride?: string | null) => {
@@ -161,13 +192,19 @@ function App() {
           fetchNpy(`${API_BASE_URL}${meta.mask_url}`),
         ]);
 
+        const nx = velNpy.shape[2];
+        const ny = velNpy.shape[1];
         setFlowData({
           velocity: velNpy.data as Float32Array,
           pressure: pressNpy.data as Float32Array,
           mask: maskNpy.data as Uint8Array,
-          nx: velNpy.shape[2],
-          ny: velNpy.shape[1],
+          nx,
+          ny,
         });
+        // Prefer explicit mask shape when present (ny, nx)
+        const maskNy = maskNpy.shape.length >= 2 ? maskNpy.shape[0] : ny;
+        const maskNx = maskNpy.shape.length >= 2 ? maskNpy.shape[1] : nx;
+        storeMaskForSurrogate(maskNpy.data as ArrayLike<number>, maskNx, maskNy);
 
         if (!activeCase.isCustom) {
           setSimModeLabel(meta.mode_label ?? 'Cached 2D demonstration field');
@@ -180,7 +217,7 @@ function App() {
         setLoadingFlowData(false);
       }
     },
-    [backendStatus, closestPreset]
+    [backendStatus, closestPreset, storeMaskForSurrogate]
   );
 
   useEffect(() => {
@@ -201,6 +238,36 @@ function App() {
     const interval = setInterval(checkHealth, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  // Surrogate model availability (does not replace LBM)
+  useEffect(() => {
+    if (backendStatus !== 'connected') {
+      setSurrogateAvailable(null);
+      setSurrogateHint(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/surrogate/status`);
+        if (!response.ok) throw new Error('status failed');
+        const body = await response.json();
+        if (cancelled) return;
+        setSurrogateAvailable(Boolean(body.model_available));
+        setSurrogateHint(body.hint ?? null);
+        setSurrogateStatusDisclaimer(body.educational_disclaimer ?? null);
+      } catch {
+        if (!cancelled) {
+          setSurrogateAvailable(false);
+          setSurrogateHint('Could not reach surrogate status endpoint');
+        }
+      }
+    };
+    fetchStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendStatus]);
 
   // Honest offline labeling when backend is down (keep live solver results if already computed).
   useEffect(() => {
@@ -274,13 +341,18 @@ function App() {
         fetchNpy(`${API_BASE_URL}${res.mask_url}`),
       ]);
 
+      const nx = velNpy.shape[2];
+      const ny = velNpy.shape[1];
       setFlowData({
         velocity: velNpy.data as Float32Array,
         pressure: pressNpy.data as Float32Array,
         mask: maskNpy.data as Uint8Array,
-        nx: velNpy.shape[2],
-        ny: velNpy.shape[1],
+        nx,
+        ny,
       });
+      const maskNy = maskNpy.shape.length >= 2 ? maskNpy.shape[0] : ny;
+      const maskNx = maskNpy.shape.length >= 2 ? maskNpy.shape[1] : nx;
+      storeMaskForSurrogate(maskNpy.data as ArrayLike<number>, maskNx, maskNy);
 
       setDataSource('computed');
       setSimModeLabel('Educational 2D LBM solver output');
@@ -361,6 +433,9 @@ function App() {
     setDataSource('cached');
     setProcessingStepIndex(0);
     setLastSolverAngle(null);
+    setSurrogatePred(null);
+    setSurrogateError(null);
+    setMaskForSurrogate(null);
 
     if (backendStatus !== 'connected') {
       runMockUploadFlow(file);
@@ -410,6 +485,22 @@ function App() {
         { ...FALLBACK_CASES[0], isCustom: true, backendId: 'custom_upload' },
         res.closest_preset
       );
+
+      // Prefer the uploaded job mask for the surrogate (not only the closest-template field)
+      try {
+        const jobMask = await fetchNpy(
+          `${API_BASE_URL}/api/simulate/result/${res.job_id}/mask`
+        );
+        if (jobMask.shape.length >= 2) {
+          storeMaskForSurrogate(
+            jobMask.data as ArrayLike<number>,
+            jobMask.shape[1],
+            jobMask.shape[0]
+          );
+        }
+      } catch (maskErr) {
+        console.warn('Could not load upload mask for surrogate; using loaded flow mask.', maskErr);
+      }
     } catch (err) {
       console.warn('Real upload failed, falling back to offline mode:', err);
       runMockUploadFlow(file);
@@ -433,6 +524,59 @@ function App() {
     setShowVoxels(false);
     setShowSlicePlane(false);
     setSlicePosition(0.0);
+    setSurrogatePred(null);
+    setSurrogateError(null);
+  };
+
+  const runSurrogatePredict = async () => {
+    if (!maskForSurrogate || backendStatus !== 'connected') return;
+    if (surrogateAvailable === false) return;
+
+    setSurrogateLoading(true);
+    setSurrogateError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/surrogate/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          flat_mask: maskForSurrogate.flat,
+          nx: maskForSurrogate.nx,
+          ny: maskForSurrogate.ny,
+        }),
+      });
+      if (response.status === 503) {
+        const detail = await response.json().catch(() => null);
+        setSurrogateAvailable(false);
+        setSurrogateError(
+          typeof detail?.detail === 'string'
+            ? detail.detail
+            : 'Surrogate model not available. Train locally first.'
+        );
+        return;
+      }
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(
+          typeof detail?.detail === 'string' ? detail.detail : `Predict failed (${response.status})`
+        );
+      }
+      const body = await response.json();
+      setSurrogatePred({
+        cd: Number(body.cd_force_proxy_pred),
+        model: String(body.model_name ?? 'surrogate'),
+        disclaimer: String(
+          body.educational_disclaimer ??
+            surrogateStatusDisclaimer ??
+            'Educational surrogate only — not certified CFD.'
+        ),
+      });
+    } catch (err) {
+      console.error('Surrogate predict failed:', err);
+      setSurrogateError(err instanceof Error ? err.message : 'Surrogate prediction failed');
+      setSurrogatePred(null);
+    } finally {
+      setSurrogateLoading(false);
+    }
   };
 
   const enterDashboard = (mode: 'demo' | 'upload') => {
@@ -717,9 +861,105 @@ function App() {
                     Re-run with new angle ({windAngle}°)
                   </button>
                 )}
+                {backendStatus === 'connected' && maskForSurrogate && (
+                  <div className="surrogate-block">
+                    <button
+                      type="button"
+                      className="run-solver-btn surrogate-btn"
+                      onClick={runSurrogatePredict}
+                      disabled={
+                        surrogateAvailable === false ||
+                        surrogateLoading ||
+                        runningSolver ||
+                        uploading
+                      }
+                      title={
+                        surrogateAvailable === false
+                          ? surrogateHint ?? 'Surrogate model not trained'
+                          : 'Fast educational Cd-proxy from the current mask (does not replace LBM)'
+                      }
+                    >
+                      {surrogateLoading ? 'Predicting…' : 'Predict Cd (ML surrogate)'}
+                    </button>
+                    {surrogateAvailable === false && (
+                      <p className="surrogate-status-msg">
+                        ML model unavailable
+                        {surrogateHint ? ` — ${surrogateHint}` : '. Train via backend scripts first.'}
+                      </p>
+                    )}
+                    {surrogateAvailable === null && (
+                      <p className="surrogate-status-msg">Checking surrogate model…</p>
+                    )}
+                    {surrogateError && (
+                      <p className="surrogate-status-msg error">{surrogateError}</p>
+                    )}
+                    {surrogatePred && (
+                      <div className="surrogate-result">
+                        <div className="surrogate-result-row">
+                          <span className="surrogate-result-label">Cd force proxy (ML)</span>
+                          <span className="surrogate-result-value">
+                            {surrogatePred.cd.toFixed(3)}
+                          </span>
+                        </div>
+                        <span className="surrogate-model">Model: {surrogatePred.model}</span>
+                        <p className="surrogate-disclaimer">{surrogatePred.disclaimer}</p>
+                        <p className="surrogate-status-msg">
+                          Parallel educational path — does not replace the live 2D LBM field.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* Surrogate also available for template demos when a mask is loaded */}
+          {!uploadedFile &&
+            backendStatus === 'connected' &&
+            maskForSurrogate &&
+            !uploading && (
+              <div className="panel-card">
+                <h3 className="panel-card-title">ML Surrogate (fast path)</h3>
+                <p className="sidebar-note">
+                  Optional educational Cd-proxy from the current demo mask. Does not replace LBM.
+                </p>
+                <button
+                  type="button"
+                  className="run-solver-btn surrogate-btn"
+                  onClick={runSurrogatePredict}
+                  disabled={surrogateAvailable === false || surrogateLoading}
+                  title={
+                    surrogateAvailable === false
+                      ? surrogateHint ?? 'Surrogate model not trained'
+                      : 'Predict educational Cd force proxy'
+                  }
+                >
+                  {surrogateLoading ? 'Predicting…' : 'Predict Cd (ML surrogate)'}
+                </button>
+                {surrogateAvailable === false && (
+                  <p className="surrogate-status-msg">
+                    ML model unavailable
+                    {surrogateHint ? ` — ${surrogateHint}` : '. Train via backend scripts first.'}
+                  </p>
+                )}
+                {surrogateError && (
+                  <p className="surrogate-status-msg error">{surrogateError}</p>
+                )}
+                {surrogatePred && (
+                  <div className="surrogate-result">
+                    <div className="surrogate-result-row">
+                      <span className="surrogate-result-label">Cd force proxy (ML)</span>
+                      <span className="surrogate-result-value">
+                        {surrogatePred.cd.toFixed(3)}
+                      </span>
+                    </div>
+                    <span className="surrogate-model">Model: {surrogatePred.model}</span>
+                    <p className="surrogate-disclaimer">{surrogatePred.disclaimer}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
           <div className="panel-card">
             <h3 className="panel-card-title">Aerodynamic Estimates</h3>
