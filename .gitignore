@@ -52,3 +52,6 @@ backend/verify_mvp.py
 evaluation_outputs/
 AeroVoxel_Evaluation_Results.md
 
+# ML surrogate datasets and large model dumps (train locally)
+backend/data/
+

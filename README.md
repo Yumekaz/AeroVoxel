@@ -15,6 +15,7 @@ This project is **educational and prototype-grade**. It is **not** certified CFD
 | Interactive wind tunnel viewer | Three.js particles + pressure coloring |
 | Image/video upload | OpenCV silhouette + optional scale-card detection |
 | Live 2D simulation | D2Q9 Lattice Boltzmann on CPU |
+| Neural surrogate (educational) | sklearn MLP predicts LBM `cd_force_proxy` from a 2D mask |
 | Offline fallback | Cached demo cases without backend |
 
 ## Quick Start
@@ -102,6 +103,45 @@ All simulation outputs share one schema: `velocity.npy` (2×ny×nx), `pressure.n
 | GET | `/api/flow-field/{case_id}` | Flow field metadata + array URLs |
 | POST | `/api/upload` | Upload image/video for CV processing |
 | POST | `/api/simulate/simple` | Run 2D LBM on uploaded mask |
+| GET | `/api/surrogate/status` | Whether a trained surrogate checkpoint is available |
+| POST | `/api/surrogate/predict` | Fast educational Cd-proxy prediction from a 2D mask |
+
+## Neural surrogate (educational)
+
+A small **in-repo ML pipeline** learns to approximate **this project's** 2D LBM educational force proxy (`cd_force_proxy`) from binary obstacle masks. It is **not** certified CFD, **not** a general aerodynamics network, and **not** a replacement for the live solver when you need the full flow field.
+
+| What it is | What it is not |
+|---|---|
+| Trained on synthetic masks labeled by AeroVoxel `LbmSolver2D` | A validated drag model vs wind-tunnel / RANS literature |
+| sklearn `MLPRegressor` (+ mean & linear baselines) | An LLM wrapper or external CFD API |
+| Fast mask → scalar proxy for teaching / UX demos | A substitute for grid-converged force integration |
+
+### Generate, train, evaluate
+
+From `backend/` (virtualenv active; needs `scikit-learn` and `joblib` from `requirements.txt`):
+
+```bash
+python scripts/generate_ml_dataset.py --n 100 --seed 42   # smoke; use --n 300 for fuller data
+python scripts/train_surrogate.py
+python scripts/eval_surrogate.py
+```
+
+- Dataset (gitignored): `backend/data/ml_surrogate/` — `masks.npy`, `labels.csv`, `meta.json`
+- Checkpoint (gitignored if large): `backend/data/ml_surrogate/models/surrogate_joblib.joblib`
+- Metrics snapshot (committed when available): `backend/app/ml/artifacts/last_eval.json`
+
+Default generation uses a **64×32** grid and reduced LBM steps for laptop-friendly runtimes. Production-ish datasets are typically **300–500** samples.
+
+### Inference API
+
+```bash
+# After training:
+curl -X POST http://127.0.0.1:8000/api/surrogate/predict ^
+  -H "Content-Type: application/json" ^
+  -d "{\"mask\": [[0,0,1,1],[0,1,1,0]]}"
+```
+
+Response includes `cd_force_proxy_pred`, `model_name`, and an educational disclaimer. If no checkpoint exists, the endpoint returns **503** with train instructions.
 
 ## Honesty Policy
 
@@ -125,6 +165,7 @@ All simulation outputs share one schema: `velocity.npy` (2×ny×nx), `pressure.n
 - Certified engineering accuracy
 - AI / neural mesh reconstruction from photos or video
 - Cloud compute
+- A surrogate that generalizes beyond this project's coarse LBM labels
 
 ## Reproducible evaluation scripts
 
@@ -134,6 +175,9 @@ From `backend/` (with the project virtualenv active):
 python scripts/run_evaluation.py --live-2d --try-sphere-cache
 python scripts/run_grid_study.py
 python scripts/run_failure_tests.py
+python scripts/generate_ml_dataset.py --n 100
+python scripts/train_surrogate.py
+python scripts/eval_surrogate.py
 ```
 
 Optional: place real photos under `evaluation_outputs/real_phone_photos/` (gitignored) and pass `--real-photos` to the evaluation or failure scripts. Outputs write under `evaluation_outputs/` (gitignored) as JSON/CSV for local analysis.

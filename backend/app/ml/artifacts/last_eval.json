@@ -1,0 +1,48 @@
+{
+  "target": "cd_force_proxy",
+  "n_samples": 200,
+  "n_train": 160,
+  "n_test": 40,
+  "seed": 42,
+  "test_size": 0.2,
+  "dataset_dir": "backend/data/ml_surrogate",
+  "model_path": "backend/data/ml_surrogate/models/surrogate_joblib.joblib",
+  "lbm_mean_wall_time_s": 0.257,
+  "lbm_mean_latency_ms": 257.03,
+  "results": [
+    {
+      "model": "mean",
+      "mae": 1.099919,
+      "rmse": 1.435849,
+      "r2": -0.034974,
+      "latency_ms": 7.3e-05,
+      "n_test": 40,
+      "n_train": 160
+    },
+    {
+      "model": "linear_geom",
+      "mae": 0.332272,
+      "rmse": 0.431051,
+      "r2": 0.906724,
+      "latency_ms": 0.00757,
+      "n_test": 40,
+      "n_train": 160
+    },
+    {
+      "model": "mlp_mask",
+      "mae": 0.385881,
+      "rmse": 0.534676,
+      "r2": 0.856487,
+      "latency_ms": 0.009855,
+      "n_test": 40,
+      "n_train": 160
+    }
+  ],
+  "primary_model": "mlp_mask",
+  "mlp_beats_mean_mae": true,
+  "trained_utc": "2026-07-27T13:53:12Z",
+  "educational_disclaimer": "Predicts educational LBM force proxies from this project only; not certified CFD and not a substitute for a live solve when accuracy matters.",
+  "note": "Metrics compare models against held-out LBM labels from this project. Not certified CFD validation.",
+  "artifacts_model_path": "backend/app/ml/artifacts/surrogate_joblib.joblib",
+  "model_size_mb": 0.079
+}
