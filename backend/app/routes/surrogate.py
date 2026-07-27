@@ -43,11 +43,30 @@ class SurrogatePredictResponse(BaseModel):
     grid: dict
 
 
+# Educational surrogate only needs coarse grids; reject huge payloads (DoS / OOM).
+_MAX_MASK_DIM = 256
+_MAX_MASK_CELLS = 128 * 128
+
+
+def _assert_mask_bounds(ny: int, nx: int) -> None:
+    if ny < 1 or nx < 1 or ny > _MAX_MASK_DIM or nx > _MAX_MASK_DIM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mask dimensions must be in 1..{_MAX_MASK_DIM} (got ny={ny}, nx={nx})",
+        )
+    if ny * nx > _MAX_MASK_CELLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mask too large ({ny * nx} cells; max {_MAX_MASK_CELLS})",
+        )
+
+
 def _mask_from_request(req: SurrogatePredictRequest) -> np.ndarray:
     if req.mask is not None:
         arr = np.asarray(req.mask, dtype=np.float32)
         if arr.ndim != 2:
             raise HTTPException(status_code=400, detail="mask must be a 2D nested list")
+        _assert_mask_bounds(int(arr.shape[0]), int(arr.shape[1]))
         return arr
 
     if req.flat_mask is not None:
@@ -56,14 +75,16 @@ def _mask_from_request(req: SurrogatePredictRequest) -> np.ndarray:
                 status_code=400,
                 detail="flat_mask requires nx and ny",
             )
+        ny, nx = int(req.ny), int(req.nx)
+        _assert_mask_bounds(ny, nx)
         flat = np.asarray(req.flat_mask, dtype=np.float32).ravel()
-        expected = int(req.nx) * int(req.ny)
+        expected = ny * nx
         if flat.size != expected:
             raise HTTPException(
                 status_code=400,
                 detail=f"flat_mask length {flat.size} != nx*ny={expected}",
             )
-        return flat.reshape(int(req.ny), int(req.nx))
+        return flat.reshape(ny, nx)
 
     raise HTTPException(
         status_code=400,

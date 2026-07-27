@@ -6,6 +6,8 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.safe_ids import require_safe_job_id
+
 router = APIRouter(prefix="/api")
 
 # Directories
@@ -15,6 +17,9 @@ UPLOADS_DIR = os.path.abspath(
 FLOW_ASSETS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "flow")
 )
+
+# Match the frontend "Max 50MB" copy; also bounds memory for CV decode.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -55,6 +60,11 @@ async def upload_file(file: UploadFile = File(...)):
             content = await file.read()
             if not content:
                 raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            if len(content) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
+                )
             f.write(content)
     except HTTPException:
         _cleanup_path(temp_path)
@@ -293,6 +303,7 @@ async def upload_file(file: UploadFile = File(...)):
 @router.get("/upload/preview/{job_id}")
 async def get_preview_image(job_id: str):
     """Exposes preview contour image to frontend client."""
+    job_id = require_safe_job_id(job_id)
     file_path = os.path.join(UPLOADS_DIR, f"preview_{job_id}.jpg")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Preview contour not found")

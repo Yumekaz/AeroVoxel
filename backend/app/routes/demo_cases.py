@@ -2,6 +2,8 @@ import os
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from app.safe_ids import require_safe_case_id
+
 router = APIRouter(prefix="/api")
 
 # Define the absolute path to the precomputed flow assets
@@ -125,6 +127,7 @@ async def get_demo_cases():
 @router.get("/flow-field/{case_id}")
 async def get_flow_field_metadata(case_id: str):
     """Return metadata for a specific case, including URLs to retrieve matrices."""
+    case_id = require_safe_case_id(case_id)
     case = next((c for c in DEMO_CASES if c["case_id"] == case_id), None)
     if not case:
         raise HTTPException(status_code=404, detail="Case profile not found")
@@ -162,6 +165,7 @@ async def get_flow_field_metadata(case_id: str):
 @router.get("/flow-field/{case_id}/velocity")
 async def get_velocity_binary(case_id: str):
     """Return raw binary .npy file for velocity."""
+    case_id = require_safe_case_id(case_id)
     file_path = os.path.join(FLOW_ASSETS_DIR, f"{case_id}_velocity.npy")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Velocity array not precalculated")
@@ -170,6 +174,7 @@ async def get_velocity_binary(case_id: str):
 @router.get("/flow-field/{case_id}/pressure")
 async def get_pressure_binary(case_id: str):
     """Return raw binary .npy file for pressure."""
+    case_id = require_safe_case_id(case_id)
     file_path = os.path.join(FLOW_ASSETS_DIR, f"{case_id}_pressure.npy")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Pressure array not precalculated")
@@ -178,6 +183,7 @@ async def get_pressure_binary(case_id: str):
 @router.get("/flow-field/{case_id}/mask")
 async def get_mask_binary(case_id: str):
     """Return raw binary .npy file for obstacle mask."""
+    case_id = require_safe_case_id(case_id)
     file_path = os.path.join(FLOW_ASSETS_DIR, f"{case_id}_mask.npy")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Obstacle mask array not precalculated")

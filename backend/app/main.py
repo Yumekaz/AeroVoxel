@@ -7,11 +7,12 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Configure CORS so the React frontend can talk to the backend
+# Local-dev CORS. allow_origins=["*"] must not pair with allow_credentials=True
+# (browsers reject that combo). This API does not use cookies.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For local development
-    allow_credentials=True,
+    allow_origins=["*"],  # Local educational prototype
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
