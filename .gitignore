@@ -45,3 +45,8 @@ backend/verify_mvp.py
 .DS_Store
 .idea/
 .vscode/
+
+# Local evaluation outputs (thesis numbers / machine-specific timings)
+evaluation_outputs/
+AeroVoxel_Evaluation_Results.md
+
