@@ -4,8 +4,11 @@ grid: 64x64x64
 steps: 200
 tau: 0.8
 u_inlet: 0.05
+diameter_lu: 19.20
+Re_est: 9.60
+Re_note: O(10); literature subcritical Cd~0.47 is NOT a valid absolute comparison at this Re — qualitative stagnation/wake only
 elapsed_seconds: 72.8
-drag_coefficient: 0.47
+drag_coefficient: 0.47  # textbook subcritical placeholder; not matched to Re_est
 lift_coefficient: 0.0
 wake_score: 0.0494
 fluidx3d_available: False

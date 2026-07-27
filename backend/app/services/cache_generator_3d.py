@@ -97,12 +97,21 @@ def generate_3d_caches():
     # Compute metrics from the 2D slice
     wake_pixels = int(np.sum((vel_2d[0] < 0.02) & (~mask_2d)))
     total_fluid = int(np.sum(~mask_2d))
-    drag_coeff = 0.47  # Sphere theoretical Cd ≈ 0.47 (Re < 1000)
+    # Catalog placeholder only — NOT matched to this Re. Default offline setup:
+    # D ≈ 0.3 * 64 = 19.2 LU, ν = (τ−0.5)/3 = 0.1, Re = u D / ν ≈ 0.05*19.2/0.1 ≈ 9.6 (O(10)).
+    # Literature subcritical Cd≈0.47 is for Re~10^3–10^5 and is not a valid absolute target here.
+    drag_coeff = 0.47
     wake_score = wake_pixels / max(total_fluid, 1)
     # Sphere has no net lift at 0° angle
     lift_coeff = 0.0
+    diameter_lu = 2.0 * 0.15 * NX
+    nu = (TAU - 0.5) / 3.0
+    re_est = U_INLET * diameter_lu / max(nu, 1e-12)
 
-    print(f"[{case_id}] Metrics: Cd~{drag_coeff:.2f}, Cl~{lift_coeff:.2f}, Wake={wake_score:.2f}")
+    print(
+        f"[{case_id}] Metrics: Cd_cat~{drag_coeff:.2f} (placeholder), Cl~{lift_coeff:.2f}, "
+        f"Wake={wake_score:.2f}, Re_est≈{re_est:.1f} (O(10) — not subcritical Cd regime)"
+    )
 
     # Write a metadata file for reference
     meta_path = os.path.join(assets_dir, f"{case_id}_meta.txt")
@@ -113,8 +122,17 @@ def generate_3d_caches():
         f.write(f"steps: {STEPS}\n")
         f.write(f"tau: {TAU}\n")
         f.write(f"u_inlet: {U_INLET}\n")
+        f.write(f"diameter_lu: {diameter_lu:.2f}\n")
+        f.write(f"Re_est: {re_est:.2f}\n")
+        f.write(
+            "Re_note: O(10); literature subcritical Cd~0.47 is NOT a valid absolute "
+            "comparison at this Re — qualitative stagnation/wake only\n"
+        )
         f.write(f"elapsed_seconds: {elapsed:.1f}\n")
-        f.write(f"drag_coefficient: {drag_coeff}\n")
+        f.write(
+            f"drag_coefficient: {drag_coeff}  "
+            f"# textbook subcritical placeholder; not matched to Re_est\n"
+        )
         f.write(f"lift_coefficient: {lift_coeff}\n")
         f.write(f"wake_score: {wake_score:.4f}\n")
         f.write(f"fluidx3d_available: {solver_info['fluidx3d_available']}\n")

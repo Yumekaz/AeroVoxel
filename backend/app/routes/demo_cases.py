@@ -87,14 +87,17 @@ DEMO_CASES = [
         "explanation": (
             "This flow field was precomputed by a D3Q19 Lattice Boltzmann solver (offline cache, not "
             "live 3D). The sphere creates a symmetric stagnation zone at the front face and a "
-            "wake region behind it. Drag coefficient for a sphere at moderate Reynolds number is "
-            "approximately 0.47 (educational estimate). This 2D view is a center-slice through the "
-            "3D domain. Generate missing assets with: python -m app.services.cache_generator_3d"
+            "wake region behind it. The offline setup runs at estimated Re ~ O(10) (coarse 64³, "
+            "u=0.05, τ=0.8); literature subcritical Cd≈0.47 applies near Re~10³–10⁵ and is "
+            "NOT a valid absolute comparison at this Re — use qualitative stagnation/wake only. "
+            "The catalog Cd 0.47 is a labeled textbook placeholder. This 2D view is a center-slice. "
+            "Generate missing assets with: python -m app.services.cache_generator_3d"
         ),
         "drag_coefficient_estimate": 0.47,
         "lift_coefficient_estimate": 0.0,
         "wake_score": 0.35,
         "grid": {"nx": 64, "ny": 64, "nz": 64},
+        "re_note": "Estimated Re ~ O(10); Cd 0.47 is not an absolute target at this Re",
     },
 ]
 
@@ -144,7 +147,12 @@ async def get_flow_field_metadata(case_id: str):
             "drag_coefficient_estimate": case["drag_coefficient_estimate"],
             "lift_coefficient_estimate": case["lift_coefficient_estimate"],
             "wake_score": case["wake_score"],
-            "confidence_label": "educational estimate",
+            "confidence_label": (
+                "educational estimate — sphere Cd≈0.47 is a subcritical placeholder; "
+                "cache Re~O(10), not a valid absolute Cd target"
+                if case_id == "sphere_3d_v1"
+                else "educational estimate"
+            ),
         },
         "velocity_url": f"/api/flow-field/{case_id}/velocity",
         "pressure_url": f"/api/flow-field/{case_id}/pressure",

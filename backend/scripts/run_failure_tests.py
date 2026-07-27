@@ -1,19 +1,24 @@
 """
-AeroVoxel failure / robustness matrix (Milestone M4).
+AeroVoxel failure / robustness matrix (F1–F5 + optional real photos).
 
 Synthesizes F1–F5 smartphone-like inputs with OpenCV/numpy, posts them through
 the same FastAPI upload route used by the demo (TestClient), and records whether
 the pipeline completes without an unhandled crash while reporting honest
 scale/mask behavior.
 
+Optional: --real-photos runs the same upload path on images in
+evaluation_outputs/real_phone_photos/ if any are present (skips if empty).
+
 Outputs JSON under repo-root evaluation_outputs/ (gitignored).
 
 Usage (from backend/):
     python scripts/run_failure_tests.py
+    python scripts/run_failure_tests.py --real-photos
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -37,6 +42,7 @@ from app.main import app  # noqa: E402
 REPO_ROOT = os.path.abspath(os.path.join(BACKEND_ROOT, ".."))
 OUT_DIR = os.path.join(REPO_ROOT, "evaluation_outputs")
 FIXTURE_DIR = os.path.join(OUT_DIR, "failure_fixtures")
+REAL_PHOTO_DIR = os.path.join(OUT_DIR, "real_phone_photos")
 
 
 # ---------------------------------------------------------------------------
@@ -356,5 +362,126 @@ def _observed_summary(
     return f"HTTP {http_status}; body={body}"
 
 
+def run_real_photos() -> dict[str, Any]:
+    """Upload matrix on optional real phone photos; skip if folder empty."""
+    os.makedirs(REAL_PHOTO_DIR, exist_ok=True)
+    readme = os.path.join(REAL_PHOTO_DIR, "README.txt")
+    if not os.path.exists(readme):
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(
+                "Drop real smartphone photos (JPG/PNG) here for optional upload robustness runs.\n"
+                "Gitignored via evaluation_outputs/. Empty folder = skip (not a failure).\n"
+            )
+
+    exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    images = sorted(
+        p
+        for p in os.listdir(REAL_PHOTO_DIR)
+        if os.path.splitext(p)[1].lower() in exts
+        and os.path.isfile(os.path.join(REAL_PHOTO_DIR, p))
+    )
+    if not images:
+        msg = (
+            f"No images in {REAL_PHOTO_DIR} — skipping real-photo matrix "
+            "(add JPG/PNG to enable; not required)."
+        )
+        print(f"[real-photos] {msg}")
+        return {
+            "status": "skipped",
+            "reason": "folder empty or no images",
+            "folder": REAL_PHOTO_DIR,
+            "message": msg,
+            "n_images": 0,
+        }
+
+    client = TestClient(app)
+    results: list[dict[str, Any]] = []
+    t0 = time.perf_counter()
+    for name in images:
+        path = os.path.join(REAL_PHOTO_DIR, name)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        mime = "image/png" if name.lower().endswith(".png") else "image/jpeg"
+        http_status = 0
+        body: dict[str, Any] | None = None
+        error: str | None = None
+        case_t0 = time.perf_counter()
+        try:
+            resp = client.post(
+                "/api/upload",
+                files={"file": (name, BytesIO(data), mime)},
+            )
+            http_status = resp.status_code
+            try:
+                body = resp.json()
+            except Exception:
+                body = None
+                error = resp.text[:500]
+        except Exception as exc:
+            http_status = 500
+            error = f"{type(exc).__name__}: {exc}"
+
+        ok = http_status == 200 and isinstance(body, dict) and body.get("status") == "completed"
+        # Real photos: pass = no crash / completed; scale honesty is observational
+        wall_ms = (time.perf_counter() - case_t0) * 1000.0
+        row = {
+            "test_id": f"REAL_{name}",
+            "condition": "Real smartphone photo (user-provided)",
+            "file": name,
+            "http_status": http_status,
+            "pass": ok,
+            "response": body,
+            "error": error,
+            "observed": _observed_summary(http_status, body, error),
+            "wall_ms": round(wall_ms, 1),
+        }
+        results.append(row)
+        flag = "PASS" if ok else "FAIL"
+        print(f"[real-photos][{flag}] {name} http={http_status} {wall_ms:.0f}ms")
+
+    summary = {
+        "status": "ran",
+        "folder": REAL_PHOTO_DIR,
+        "n_images": len(images),
+        "all_pass": all(r["pass"] for r in results),
+        "total_wall_s": round(time.perf_counter() - t0, 3),
+        "results": results,
+        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    json_path = os.path.join(OUT_DIR, f"m5_real_photos_{stamp}.json")
+    latest_path = os.path.join(OUT_DIR, "m5_real_photos_latest.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    with open(latest_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    print(f"[real-photos] Wrote {json_path}")
+    return summary
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AeroVoxel failure / robustness matrix")
+    parser.add_argument(
+        "--real-photos",
+        action="store_true",
+        help="Also run upload matrix on evaluation_outputs/real_phone_photos/ if images exist",
+    )
+    parser.add_argument(
+        "--skip-synthetic",
+        action="store_true",
+        help="Skip F1–F5 synthetic fixtures (use with --real-photos)",
+    )
+    args = parser.parse_args()
+
+    if not args.skip_synthetic:
+        run_matrix()
+    if args.real_photos:
+        run_real_photos()
+    elif not args.skip_synthetic:
+        # Ensure documented folder exists for future optional runs
+        os.makedirs(REAL_PHOTO_DIR, exist_ok=True)
+    return 0
+
+
 if __name__ == "__main__":
-    run_matrix()
+    raise SystemExit(main())

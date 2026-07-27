@@ -3,7 +3,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
-from app.solvers.lbm_2d import LbmSolver2D
+from app.solvers.lbm_2d import LbmSolver2D, educational_force_metrics
 
 router = APIRouter(prefix="/api")
 
@@ -51,31 +51,44 @@ async def run_simulation(req: SimulateRequest):
             wind_angle_deg=req.wind_angle_deg,
         )
         # Run solver (600 iterations is plenty for visual convergence at 128x64)
-        u, pressure = solver.solve(mask, steps=600)
-        
+        u, pressure = solver.solve(mask, steps=600, force_avg_steps=40)
+
         # Save computed arrays
         vel_path = os.path.join(UPLOADS_DIR, f"velocity_{req.job_id}.npy")
         press_path = os.path.join(UPLOADS_DIR, f"pressure_{req.job_id}.npy")
-        
+
         np.save(vel_path, u.astype(np.float32))
         np.save(press_path, pressure.astype(np.float32))
-        
-        # Calculate mock coefficients from the actual simulation flow structures
-        # Drag estimate: proportional to wake separation area (where u_x < 0 behind object)
-        wake_pixels = np.sum((u[0] < 0.02) & (mask == False))
+
+        # Heuristic Cd from wake area (legacy educational estimate)
+        fluid = mask == False
+        wake_pixels = np.sum((u[0] < 0.02) & fluid)
         drag_coeff = float(0.15 + (wake_pixels / (128 * 64)) * 3.5)
         drag_coeff = max(0.05, min(1.8, drag_coeff))
-        
+
         # Lift estimate: proportional to top-to-bottom pressure asymmetry
-        # Divide grid vertically
         top_press = np.sum(pressure[:32])
         bottom_press = np.sum(pressure[32:])
         lift_coeff = float((bottom_press - top_press) * 1.5)
         lift_coeff = max(-0.8, min(1.5, lift_coeff))
-        
+
         wake_score = float(wake_pixels / (128 * 32))
         wake_score = max(0.05, min(0.99, wake_score))
-        
+
+        # Characteristic length ≈ solid height (frontal length) in lattice units
+        ys, xs = np.where(mask.astype(bool))
+        char_L = float(ys.max() - ys.min() + 1) if ys.size else 16.0
+        force_m = educational_force_metrics(
+            pressure=pressure,
+            mask=mask,
+            u_ref=u_inlet,
+            char_length=char_L,
+            velocity=u,
+            tau=0.6,
+            momentum_force_lu=solver.last_force_lu,
+            momentum_method=solver.last_force_method,
+        )
+
         return SimulateResponse(
             job_id=req.job_id,
             status="completed",
@@ -87,7 +100,10 @@ async def run_simulation(req: SimulateRequest):
                 "drag_coefficient_estimate": drag_coeff,
                 "lift_coefficient_estimate": lift_coeff,
                 "wake_score": wake_score,
-                "confidence_label": "educational estimate",
+                "cd_force_proxy": force_m["cd_force_proxy"],
+                "cd_surface_proxy": force_m["cd_surface_proxy"],
+                "cd_force_proxy_method": force_m["cd_force_proxy_method"],
+                "confidence_label": "educational estimate (not certified CFD)",
             }
         )
     except Exception as e:

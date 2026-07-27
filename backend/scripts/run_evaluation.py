@@ -1,10 +1,10 @@
 """
-AeroVoxel evaluation runner (Milestone M3).
+AeroVoxel evaluation runner (V1–V3 + V&V metrics).
 
 Loads locked validation cases (V1 cylinder 2D, V2 sphere 3D if present,
-V3 airfoil 2D), reports grid / Reynolds estimates, catalog metrics, and
-field-derived wake / pressure proxies. Optionally re-runs live 2D LBM for
-wall-time measurement on the laptop.
+V3 airfoil 2D), reports grid / Reynolds estimates, catalog metrics,
+field-derived wake / pressure proxies, and educational force-based Cd
+proxies (momentum exchange when live; surface integral on caches).
 
 Outputs JSON + CSV under repo-root evaluation_outputs/ (gitignored).
 
@@ -12,9 +12,10 @@ Usage (from backend/):
     python scripts/run_evaluation.py
     python scripts/run_evaluation.py --live-2d
     python scripts/run_evaluation.py --try-sphere-cache
+    python scripts/run_evaluation.py --real-photos
 
-Honest labels: Cd/Cl in this project are educational heuristics or catalog
-constants — not force-integrated CFD coefficients.
+Honest labels: Cd/Cl are educational heuristics, catalog constants, or
+coarse force proxies — not certified CFD coefficients.
 """
 
 from __future__ import annotations
@@ -45,10 +46,11 @@ from app.services.cache_generator import (  # noqa: E402
     make_airfoil_mask,
     make_cylinder_mask,
 )
-from app.solvers.lbm_2d import LbmSolver2D  # noqa: E402
+from app.solvers.lbm_2d import LbmSolver2D, educational_force_metrics  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(BACKEND_ROOT, ".."))
 OUT_DIR = os.path.join(REPO_ROOT, "evaluation_outputs")
+REAL_PHOTO_DIR = os.path.join(OUT_DIR, "real_phone_photos")
 
 # Catalog case_id per validation ID
 CASE_MAP = {
@@ -62,12 +64,22 @@ LITERATURE = {
     "V1": {
         "metric": "Cd (2D circular cylinder)",
         "reference": "O(1); ~1.5–1.7 near Re≈40 (classic experiments / textbooks)",
-        "notes": "Coarse 128×64 LBM; catalog Cd is educational, not force-integrated.",
+        "notes": (
+            "Coarse 128×64 LBM; catalog Cd is educational. "
+            "cd_force_proxy uses bounce-back momentum exchange (live) or surface integral (cache) — still not certified CFD."
+        ),
     },
     "V2": {
-        "metric": "Cd (sphere) or qualitative wake/stagnation",
-        "reference": "Subcritical sphere Cd ≈ 0.4–0.5 (Re ~10^3–10^5); at Re≪100 Cd is higher",
-        "notes": "Catalog Cd 0.47 is a textbook subcritical placeholder; grid is coarse 64³.",
+        "metric": "Qualitative wake/stagnation (sphere); Cd catalog is NOT a valid absolute target at this Re",
+        "reference": (
+            "Literature subcritical Cd≈0.47 applies near Re ~ 10^3–10^5. "
+            "This cache runs at Re ~ O(10); Stokes/intermediate regime Cd is much higher. "
+            "Do not treat catalog 0.47 as a quantitative benchmark here."
+        ),
+        "notes": (
+            "Offline 64³ D3Q19; estimated Re = u*D/ν with D≈19.2 LU, u=0.05, τ=0.8 → Re≈O(10). "
+            "Use qualitative stagnation/wake only unless Re is raised carefully offline."
+        ),
     },
     "V3": {
         "metric": "Cl proxy / suction-side Δp story",
@@ -105,8 +117,13 @@ def field_metrics_2d(
     mask: np.ndarray,
     nx: int,
     ny: int,
+    u_ref: float = U_INLET2,
+    char_length: float | None = None,
+    tau: float = TAU2,
+    momentum_force_lu: tuple[float, float] | None = None,
+    momentum_method: str | None = None,
 ) -> dict[str, float]:
-    """Same educational heuristics as routes/simulate.py (+ a few structure proxies)."""
+    """Educational heuristics as routes/simulate.py + force-based Cd proxy."""
     # Velocity layout: (2, ny, nx) for 2D solver caches
     if velocity.ndim == 3 and velocity.shape[0] == 2:
         ux = velocity[0]
@@ -151,6 +168,21 @@ def field_metrics_2d(
 
     solid_frac = float(np.mean(mask.astype(bool)))
 
+    if char_length is None:
+        ys, _xs = np.where(mask.astype(bool))
+        char_length = float(ys.max() - ys.min() + 1) if ys.size else 16.0
+
+    force_m = educational_force_metrics(
+        pressure=pressure,
+        mask=mask,
+        u_ref=u_ref,
+        char_length=float(char_length),
+        velocity=velocity if velocity.ndim == 3 else np.stack([ux, uy], axis=0),
+        tau=tau,
+        momentum_force_lu=momentum_force_lu,
+        momentum_method=momentum_method,
+    )
+
     return {
         "heuristic_cd": drag_coeff,
         "heuristic_cl": lift_coeff,
@@ -163,6 +195,13 @@ def field_metrics_2d(
         "u_mag_mean_fluid": float(np.mean(u_fluid)) if u_fluid.size else 0.0,
         "u_mag_max_fluid": float(np.max(u_fluid)) if u_fluid.size else 0.0,
         "solid_fraction": solid_frac,
+        "cd_force_proxy": force_m["cd_force_proxy"],
+        "cd_surface_proxy": force_m["cd_surface_proxy"],
+        "cd_force_proxy_method": force_m["cd_force_proxy_method"],
+        "force_x_lu": force_m["force_x_lu"],
+        "force_y_lu": force_m["force_y_lu"],
+        "char_length_lu_for_cd": float(char_length),
+        "force_label": force_m["label"],
     }
 
 
@@ -253,9 +292,20 @@ def run_live_2d(case_kind: str, steps: int = STEPS2) -> dict[str, Any]:
 
     solver = LbmSolver2D(nx=NX2, ny=NY2, tau=TAU2, u_inlet=U_INLET2, wind_angle_deg=0.0)
     t0 = time.perf_counter()
-    u, pressure = solver.solve(mask, steps=steps)
+    u, pressure = solver.solve(mask, steps=steps, force_avg_steps=40)
     wall = time.perf_counter() - t0
-    metrics = field_metrics_2d(u, pressure, mask, NX2, NY2)
+    metrics = field_metrics_2d(
+        u,
+        pressure,
+        mask,
+        NX2,
+        NY2,
+        u_ref=U_INLET2,
+        char_length=L,
+        tau=TAU2,
+        momentum_force_lu=solver.last_force_lu,
+        momentum_method=solver.last_force_method,
+    )
     quals = qualitative_checks(u, pressure, mask, case_kind)
     return {
         "wall_time_s": wall,
@@ -320,7 +370,14 @@ def evaluate_v1(live: bool) -> dict[str, Any]:
     }
     if arrays:
         result["field_metrics_from_cache"] = field_metrics_2d(
-            arrays["velocity"], arrays["pressure"], arrays["mask"], 128, 64
+            arrays["velocity"],
+            arrays["pressure"],
+            arrays["mask"],
+            128,
+            64,
+            u_ref=U_INLET2,
+            char_length=L,
+            tau=TAU2,
         )
         result["qualitative_from_cache"] = qualitative_checks(
             arrays["velocity"], arrays["pressure"], arrays["mask"], "cylinder"
@@ -362,7 +419,14 @@ def evaluate_v3(live: bool) -> dict[str, Any]:
     }
     if arrays:
         result["field_metrics_from_cache"] = field_metrics_2d(
-            arrays["velocity"], arrays["pressure"], arrays["mask"], 128, 64
+            arrays["velocity"],
+            arrays["pressure"],
+            arrays["mask"],
+            128,
+            64,
+            u_ref=U_INLET2,
+            char_length=L,
+            tau=TAU2,
         )
         result["qualitative_from_cache"] = qualitative_checks(
             arrays["velocity"], arrays["pressure"], arrays["mask"], "airfoil"
@@ -395,6 +459,13 @@ def evaluate_v2(try_cache: bool) -> dict[str, Any]:
     D = 2.0 * radius
     tau = float(meta.get("tau", 0.8))
     u_inlet = float(meta.get("u_inlet", 0.05))
+    re_est = estimate_re(u_inlet, D, tau)
+    # Regime note: Re ~ O(10) with default offline params — not subcritical Cd~0.47 regime
+    re_regime = (
+        "Stokes/intermediate O(10)"
+        if re_est < 100
+        else ("transitional" if re_est < 1000 else "subcritical-candidate")
+    )
 
     result: dict[str, Any] = {
         "validation_id": "V2",
@@ -405,14 +476,24 @@ def evaluate_v2(try_cache: bool) -> dict[str, Any]:
         "meta_file": meta if meta else None,
         "tau": tau,
         "u_inlet": u_inlet,
-        "Re_est": estimate_re(u_inlet, D, tau),
+        "Re_est": re_est,
+        "Re_regime": re_regime,
+        "Re_honesty": (
+            f"Estimated Re≈{re_est:.1f} is O(10). Literature subcritical sphere Cd≈0.47 "
+            "(Re ~ 10^3–10^5) is NOT a valid absolute comparison at this Re. "
+            "Validate qualitative stagnation / wake only; catalog Cd is a labeled placeholder."
+        ),
         "char_length_lu": D,
         "char_length_meaning": "sphere diameter ≈ 19.2 LU (radius_fraction=0.15 on 64³)",
         "catalog_metrics": {
             "drag_coefficient_estimate": cat["drag_coefficient_estimate"] if cat else 0.47,
             "lift_coefficient_estimate": cat["lift_coefficient_estimate"] if cat else 0.0,
             "wake_score": cat["wake_score"] if cat else None,
-            "source": "hardcoded textbook subcritical Cd≈0.47 in demo_cases / cache_generator_3d",
+            "source": (
+                "hardcoded textbook subcritical Cd≈0.47 placeholder — "
+                "NOT matched to this cache Re; do not use for absolute error"
+            ),
+            "absolute_cd_comparison_valid": False,
         },
         "literature": LITERATURE["V2"],
         "assets_ready": _case_assets_ready(case_id),
@@ -427,10 +508,21 @@ def evaluate_v2(try_cache: bool) -> dict[str, Any]:
     if result["assets_ready"]:
         arrays = load_case_arrays(case_id)
         if arrays:
-            # Center-slice is 2D
+            # Center-slice is 2D — force Cd on slice is not a 3D sphere Cd
             ny, nx_s = arrays["mask"].shape
             result["field_metrics_from_cache"] = field_metrics_2d(
-                arrays["velocity"], arrays["pressure"], arrays["mask"], nx_s, ny
+                arrays["velocity"],
+                arrays["pressure"],
+                arrays["mask"],
+                nx_s,
+                ny,
+                u_ref=u_inlet,
+                char_length=D,
+                tau=tau,
+            )
+            result["field_metrics_from_cache"]["note"] = (
+                "Force/Cd proxies on center-slice are 2D-style educational metrics, "
+                "not 3D sphere force integration; prefer qualitative checks at this Re."
             )
             result["qualitative_from_cache"] = qualitative_checks(
                 arrays["velocity"], arrays["pressure"], arrays["mask"], "sphere"
@@ -454,12 +546,15 @@ def evaluate_v2(try_cache: bool) -> dict[str, Any]:
 def agreement_band(case_id: str, catalog_cd: float | None, re_est: float) -> str:
     if case_id == "V1":
         # Literature O(1) at moderate Re; catalog ~1.1
-        return "Order-of-magnitude O(1) agreement with classic 2D cylinder Cd; not quantitative validation"
+        return (
+            "Order-of-magnitude O(1) vs classic 2D cylinder Cd; "
+            "compare cd_force_proxy only as educational trend, not quantitative validation"
+        )
     if case_id == "V2":
         if re_est < 100:
             return (
-                f"Re_est≈{re_est:.0f} is low; textbook subcritical Cd~0.47 is a poor match regime — "
-                "use qualitative stagnation/wake only; Cd label educational/rough"
+                f"Re_est≈{re_est:.0f} is O(10); textbook subcritical Cd~0.47 is NOT a valid "
+                "absolute comparison — qualitative stagnation/wake only"
             )
         return "Band ~0.4–0.5 only if Re subcritical; coarse-grid caveat applies"
     if case_id == "V3":
@@ -477,31 +572,37 @@ def table_rows(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         live_m = live.get("metrics") or {}
 
         if vid == "V1":
-            metric_name = "Cd (catalog) / wake_score (field)"
+            metric_name = "Cd catalog / wake_score / cd_force_proxy"
             av_val = (
                 f"Cd_cat={cat.get('drag_coefficient_estimate')}; "
                 f"wake_score_field={field.get('wake_score')}; "
-                f"Cd_heur_field={field.get('heuristic_cd')}"
+                f"Cd_heur_field={field.get('heuristic_cd')}; "
+                f"cd_force_proxy_cache={field.get('cd_force_proxy')}"
             )
             if live_m:
-                av_val += f"; live Cd_heur={live_m.get('heuristic_cd')} ({live.get('wall_time_s'):.2f}s)"
+                av_val += (
+                    f"; live Cd_heur={live_m.get('heuristic_cd')} "
+                    f"cd_force={live_m.get('cd_force_proxy')} "
+                    f"({live.get('wall_time_s'):.2f}s)"
+                )
             ref = r["literature"]["reference"]
             label = "educational"
         elif vid == "V2":
             if not r.get("assets_ready"):
-                metric_name = "Cd est. or qualitative score"
+                metric_name = "Qualitative wake/stagnation (Cd catalog invalid at this Re)"
                 av_val = "N/A — center-slice .npy cache not available"
                 ref = r["literature"]["reference"]
                 label = "fail / N/A"
             else:
-                metric_name = "Cd (catalog) / wake + stagnation (field)"
+                metric_name = "Qualitative wake+stagnation (Cd_cat not absolute target)"
                 av_val = (
-                    f"Cd_cat={cat.get('drag_coefficient_estimate')}; "
+                    f"Cd_cat={cat.get('drag_coefficient_estimate')} (placeholder only); "
+                    f"Re≈{r.get('Re_est'):.1f} ({r.get('Re_regime')}); "
                     f"wake_score_field={field.get('wake_score')}; "
                     f"Δp={field.get('delta_p')}"
                 )
                 ref = r["literature"]["reference"]
-                label = "educational / rough"
+                label = "educational / qualitative only at Re~O(10)"
         else:
             metric_name = "Cl (catalog) / Cl_heur (field) / suction story"
             av_val = (
@@ -573,8 +674,113 @@ def write_outputs(payload: dict[str, Any]) -> tuple[str, str]:
     return json_path, csv_path
 
 
+def run_real_photo_hook() -> dict[str, Any]:
+    """Optional: upload matrix on images in evaluation_outputs/real_phone_photos/.
+
+    Does not require user photos. Empty/missing folder → skip with message.
+    """
+    os.makedirs(REAL_PHOTO_DIR, exist_ok=True)
+    # Documented placeholder so the folder intent is visible when empty
+    readme = os.path.join(REAL_PHOTO_DIR, "README.txt")
+    if not os.path.exists(readme):
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(
+                "Drop real smartphone photos (JPG/PNG) here for optional upload robustness runs.\n"
+                "This folder is gitignored via evaluation_outputs/.\n"
+                "Run: python scripts/run_evaluation.py --real-photos\n"
+                "  or: python scripts/run_failure_tests.py --real-photos\n"
+                "If empty, the hook skips without failing.\n"
+            )
+
+    exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    images = sorted(
+        p
+        for p in os.listdir(REAL_PHOTO_DIR)
+        if os.path.splitext(p)[1].lower() in exts
+        and os.path.isfile(os.path.join(REAL_PHOTO_DIR, p))
+    )
+    if not images:
+        msg = (
+            f"No real phone photos in {REAL_PHOTO_DIR} — skipping real-photo matrix "
+            "(place JPG/PNG files there to enable)."
+        )
+        print(f"[real-photos] {msg}")
+        return {
+            "status": "skipped",
+            "reason": "folder empty or no images",
+            "folder": REAL_PHOTO_DIR,
+            "message": msg,
+            "n_images": 0,
+        }
+
+    # Reuse failure-test upload path via TestClient
+    from fastapi.testclient import TestClient  # noqa: WPS433
+    from io import BytesIO
+
+    from app.main import app
+
+    client = TestClient(app)
+    rows: list[dict[str, Any]] = []
+    t0 = time.perf_counter()
+    for name in images:
+        path = os.path.join(REAL_PHOTO_DIR, name)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        mime = "image/png" if name.lower().endswith(".png") else "image/jpeg"
+        http_status = 0
+        body: dict[str, Any] | None = None
+        error: str | None = None
+        try:
+            resp = client.post(
+                "/api/upload",
+                files={"file": (name, BytesIO(data), mime)},
+            )
+            http_status = resp.status_code
+            try:
+                body = resp.json()
+            except Exception:
+                body = None
+                error = resp.text[:500]
+        except Exception as exc:  # noqa: BLE001
+            http_status = 500
+            error = f"{type(exc).__name__}: {exc}"
+
+        ok = http_status == 200 and isinstance(body, dict) and body.get("status") == "completed"
+        rows.append(
+            {
+                "file": name,
+                "http_status": http_status,
+                "pass": ok,
+                "scale_status": (body or {}).get("scale_status") if body else None,
+                "detected_object": (body or {}).get("detected_object") if body else None,
+                "closest_preset": (body or {}).get("closest_preset") if body else None,
+                "error": error,
+            }
+        )
+        flag = "PASS" if ok else "FAIL"
+        print(f"[real-photos][{flag}] {name} http={http_status}")
+
+    out = {
+        "status": "ran",
+        "folder": REAL_PHOTO_DIR,
+        "n_images": len(images),
+        "all_pass": all(r["pass"] for r in rows),
+        "results": rows,
+        "wall_time_s": time.perf_counter() - t0,
+    }
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(OUT_DIR, f"m5_real_photos_{stamp}.json")
+    latest = os.path.join(OUT_DIR, "m5_real_photos_latest.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2, default=str)
+    with open(latest, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2, default=str)
+    print(f"[real-photos] Wrote {path}")
+    return out
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AeroVoxel M3 evaluation runner")
+    parser = argparse.ArgumentParser(description="AeroVoxel evaluation runner")
     parser.add_argument(
         "--live-2d",
         action="store_true",
@@ -597,14 +803,22 @@ def main() -> int:
         action="store_true",
         help="Do not attempt sphere 3D cache generation",
     )
+    parser.add_argument(
+        "--real-photos",
+        action="store_true",
+        help=(
+            "If evaluation_outputs/real_phone_photos/ contains images, run upload matrix on them; "
+            "if empty, skip with a message"
+        ),
+    )
     args = parser.parse_args()
     live = args.live_2d and not args.no_live_2d
     try_sphere = args.try_sphere_cache and not args.no_sphere_cache
 
     print("=" * 60)
-    print("AeroVoxel M3 evaluation")
+    print("AeroVoxel evaluation")
     print(f"FLOW_ASSETS_DIR: {FLOW_ASSETS_DIR}")
-    print(f"live_2d={live}, try_sphere_cache={try_sphere}")
+    print(f"live_2d={live}, try_sphere_cache={try_sphere}, real_photos={args.real_photos}")
     print("=" * 60)
 
     t_all = time.perf_counter()
@@ -613,6 +827,7 @@ def main() -> int:
         "V3": evaluate_v3(live=live),
         "V2": evaluate_v2(try_cache=try_sphere),
     }
+    real_photo_report = run_real_photo_hook() if args.real_photos else None
     wall_all = time.perf_counter() - t_all
 
     payload = {
@@ -621,13 +836,24 @@ def main() -> int:
         "method": {
             "catalog_metrics": "demo_cases.py hardcoded educational estimates",
             "field_heuristics": "Same formulas as app/routes/simulate.py (wake-area Cd, pressure-asymmetry Cl)",
+            "cd_force_proxy": (
+                "Primary: discrete surface pressure + rough viscous traction (works on live and cache). "
+                "Secondary (live): fluid-side bounce-back momentum exchange average. "
+                "Cd = 2 Fx / (ρ U² L). Educational — not certified CFD."
+            ),
             "Re": "Re = u_inlet * L / ν, ν = (τ−0.5)/3 lattice BGK",
+            "sphere_Re_honesty": (
+                "Default offline sphere is Re~O(10); catalog Cd 0.47 is a subcritical placeholder "
+                "and must not be used as an absolute error target at that Re."
+            ),
             "cache_gen_2d": "app/services/cache_generator.py (800 steps, τ=0.6, u=0.08, 128×64)",
             "cache_gen_3d": "app/services/cache_generator_3d.py (200 steps, τ=0.8, u=0.05, 64³)",
             "script": "backend/scripts/run_evaluation.py",
+            "grid_study": "backend/scripts/run_grid_study.py",
         },
         "results": results,
         "table_a_rows": table_rows(results),
+        "real_phone_photos": real_photo_report,
         "total_wall_time_s": wall_all,
     }
 
@@ -641,6 +867,8 @@ def main() -> int:
         )
         print(f"  value: {row['aerovoxel_value']}")
         print(f"  agreement: {row['agreement']}")
+    if real_photo_report is not None:
+        print(f"\nReal photos: {real_photo_report.get('status')} n={real_photo_report.get('n_images')}")
     print(f"\nTotal wall time: {wall_all:.1f}s")
     return 0
 
