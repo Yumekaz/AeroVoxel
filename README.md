@@ -148,6 +148,8 @@ curl -X POST http://127.0.0.1:8000/api/surrogate/predict ^
 
 Response includes `cd_force_proxy_pred`, `model_name` (bundle primary unless overridden), and an educational disclaimer. If no checkpoint exists, the endpoint returns **503** with train instructions.
 
+In the web UI, after a mask is available (demo template or upload), use **Predict Cd (ML surrogate)** next to the live LBM controls. The button disables when `GET /api/surrogate/status` reports no model. Predictions are a fast parallel path and do not replace the 2D LBM flow field.
+
 ## Honesty Policy
 
 **What is real:**
@@ -186,6 +188,8 @@ python scripts/eval_surrogate.py
 ```
 
 Optional: place real photos under `evaluation_outputs/real_phone_photos/` (gitignored) and pass `--real-photos` to the evaluation or failure scripts. Outputs write under `evaluation_outputs/` (gitignored) as JSON/CSV for local analysis.
+
+Phone-like synthetic fixtures (noise, JPEG compression, uneven light; not real phones) can be generated and scored via `python scripts/run_phone_photo_tests.py` → `evaluation_outputs/phone_like_photos/` + `phone_like_latest.json` (gitignored).
 
 ## Demo Fallback Checklist
 
