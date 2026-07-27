@@ -114,16 +114,29 @@ All simulation outputs share one schema: `velocity.npy` (2×ny×nx), `pressure.n
 - Circular cylinder validation demo (`cylinder_v1`) as an educational bluff-body case
 
 **What is approximate:**
-- Drag/lift/wake metrics (heuristic estimates from flow structure — not certified Cd/Cl)
+- Drag/lift/wake metrics (wake heuristics and educational surface force proxies — not certified Cd/Cl)
 - 3D object geometry (illustrative templates, not reconstructed meshes)
 - Upload-to-template mapping before solver runs
 - Coarse grids (2D 128×64; 3D 64³) suitable for teaching, not engineering sign-off
+- Sphere 3D offline runs are low-Re; literature high-Re Cd values are not valid absolute comparisons
 
 **What is not included:**
 - GPU-accelerated 3D CFD (FluidX3D or similar)
 - Certified engineering accuracy
 - AI / neural mesh reconstruction from photos or video
 - Cloud compute
+
+## Reproducible evaluation scripts
+
+From `backend/` (with the project virtualenv active):
+
+```bash
+python scripts/run_evaluation.py --live-2d --try-sphere-cache
+python scripts/run_grid_study.py
+python scripts/run_failure_tests.py
+```
+
+Optional: place real photos under `evaluation_outputs/real_phone_photos/` (gitignored) and pass `--real-photos` to the evaluation or failure scripts. Outputs write under `evaluation_outputs/` (gitignored) as JSON/CSV for local analysis.
 
 ## Demo Fallback Checklist
 
