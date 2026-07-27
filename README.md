@@ -15,7 +15,7 @@ This project is **educational and prototype-grade**. It is **not** certified CFD
 | Interactive wind tunnel viewer | Three.js particles + pressure coloring |
 | Image/video upload | OpenCV silhouette + optional scale-card detection |
 | Live 2D simulation | D2Q9 Lattice Boltzmann on CPU |
-| Neural surrogate (educational) | sklearn MLP predicts LBM `cd_force_proxy` from a 2D mask |
+| Neural surrogate (educational) | sklearn models predict LBM `cd_force_proxy` from a 2D mask |
 | Offline fallback | Cached demo cases without backend |
 
 ## Quick Start
@@ -113,24 +113,29 @@ A small **in-repo ML pipeline** learns to approximate **this project's** 2D LBM 
 | What it is | What it is not |
 |---|---|
 | Trained on synthetic masks labeled by AeroVoxel `LbmSolver2D` | A validated drag model vs wind-tunnel / RANS literature |
-| sklearn `MLPRegressor` (+ mean & linear baselines) | An LLM wrapper or external CFD API |
+| sklearn ablation suite (mean, linear, MLP, ridge, HGB, RF) | An LLM wrapper or external CFD API |
 | Fast mask → scalar proxy for teaching / UX demos | A substitute for grid-converged force integration |
+
+The **primary API model is auto-selected** as the lowest held-out MAE among non-mean models (see `primary_model` in the joblib bundle and `last_eval.json`). Geometry-only and mask+geom ablations are reported honestly; metrics compare against this project's LBM labels only.
 
 ### Generate, train, evaluate
 
 From `backend/` (virtualenv active; needs `scikit-learn` and `joblib` from `requirements.txt`):
 
 ```bash
-python scripts/generate_ml_dataset.py --n 100 --seed 42   # smoke; use --n 300 for fuller data
-python scripts/train_surrogate.py
+python scripts/generate_ml_dataset.py --n 800 --seed 42   # laptop-friendly 64x32 LBM labels
+python scripts/train_surrogate.py --seed 42
 python scripts/eval_surrogate.py
 ```
+
+Smoke test: `--n 100`. Prefer **N≈800** for the fuller ablation table.
 
 - Dataset (gitignored): `backend/data/ml_surrogate/` — `masks.npy`, `labels.csv`, `meta.json`
 - Checkpoint (gitignored if large): `backend/data/ml_surrogate/models/surrogate_joblib.joblib`
 - Metrics snapshot (committed when available): `backend/app/ml/artifacts/last_eval.json`
+- Optional scatter: `backend/app/ml/artifacts/pred_vs_lbm.png` (requires matplotlib)
 
-Default generation uses a **64×32** grid and reduced LBM steps for laptop-friendly runtimes. Production-ish datasets are typically **300–500** samples.
+Default generation uses a **64×32** grid and reduced LBM steps for laptop-friendly runtimes. A full **N=800** pass typically finishes in a few minutes on a laptop CPU.
 
 ### Inference API
 
@@ -141,7 +146,7 @@ curl -X POST http://127.0.0.1:8000/api/surrogate/predict ^
   -d "{\"mask\": [[0,0,1,1],[0,1,1,0]]}"
 ```
 
-Response includes `cd_force_proxy_pred`, `model_name`, and an educational disclaimer. If no checkpoint exists, the endpoint returns **503** with train instructions.
+Response includes `cd_force_proxy_pred`, `model_name` (bundle primary unless overridden), and an educational disclaimer. If no checkpoint exists, the endpoint returns **503** with train instructions.
 
 ## Honesty Policy
 
@@ -175,8 +180,8 @@ From `backend/` (with the project virtualenv active):
 python scripts/run_evaluation.py --live-2d --try-sphere-cache
 python scripts/run_grid_study.py
 python scripts/run_failure_tests.py
-python scripts/generate_ml_dataset.py --n 100
-python scripts/train_surrogate.py
+python scripts/generate_ml_dataset.py --n 800 --seed 42
+python scripts/train_surrogate.py --seed 42
 python scripts/eval_surrogate.py
 ```
 

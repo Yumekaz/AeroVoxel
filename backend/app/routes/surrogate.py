@@ -28,7 +28,10 @@ class SurrogatePredictRequest(BaseModel):
     ny: Optional[int] = None
     model_name: Optional[str] = Field(
         default=None,
-        description="mean | linear_geom | mlp_mask (default: primary mlp_mask)",
+        description=(
+            "mean | linear_geom | mlp_geom | ridge_mask | mlp_mask | hgb_mask | rf_mask "
+            "(default: bundle primary_model, lowest held-out MAE)"
+        ),
     )
 
 

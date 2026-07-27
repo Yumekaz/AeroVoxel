@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import numpy as np
 
-# Compact mask encoding for the MLP path (sample-efficient on small LBM sets)
+# Compact mask encoding for mask+geom models (sample-efficient on small LBM sets)
 MASK_DS_H = 8
 MASK_DS_W = 16
 PROFILE_X_BINS = 16
 PROFILE_Y_BINS = 8
+# Coarser multi-scale profiles (shape-sensitive, low-dimensional)
+PROFILE_X_COARSE = 8
+PROFILE_Y_COARSE = 4
 
 GEOM_FEATURE_NAMES = (
     "solid_fraction",
@@ -21,6 +24,10 @@ GEOM_FEATURE_NAMES = (
     "moment_yy",
     "moment_xy",
     "char_length_norm",
+    "perimeter_norm",
+    "solidity",
+    "skew_x",
+    "skew_y",
 )
 
 
@@ -63,6 +70,29 @@ def solid_profiles(
     return np.concatenate([px, py])
 
 
+def multi_scale_profiles(mask: np.ndarray) -> np.ndarray:
+    """Fine + coarse solid-fraction profiles along streamwise and spanwise axes."""
+    fine = solid_profiles(mask, n_x=PROFILE_X_BINS, n_y=PROFILE_Y_BINS)
+    coarse = solid_profiles(mask, n_x=PROFILE_X_COARSE, n_y=PROFILE_Y_COARSE)
+    return np.concatenate([fine, coarse]).astype(np.float32)
+
+
+def perimeter_estimate(solid: np.ndarray) -> float:
+    """Approximate solid–fluid interface length in lattice units (4-neighbour)."""
+    s = solid.astype(bool)
+    if not np.any(s):
+        return 0.0
+    # Count solid cells with at least one fluid 4-neighbour (pad fluid outside)
+    padded = np.pad(s, 1, mode="constant", constant_values=False)
+    core = padded[1:-1, 1:-1]
+    up = padded[:-2, 1:-1]
+    down = padded[2:, 1:-1]
+    left = padded[1:-1, :-2]
+    right = padded[1:-1, 2:]
+    edge = core & (~up | ~down | ~left | ~right)
+    return float(np.sum(edge))
+
+
 def geometric_features(mask: np.ndarray) -> np.ndarray:
     """Compact geometric descriptors of a binary solid mask (ny, nx)."""
     solid = mask.astype(bool)
@@ -91,6 +121,17 @@ def geometric_features(mask: np.ndarray) -> np.ndarray:
     mxy = float(np.mean(dx * dy))
     char_l = bh / max(ny, 1)  # frontal height / domain height
 
+    perim = perimeter_estimate(solid)
+    # Normalize perimeter by domain diagonal so scale is O(1)
+    perim_norm = perim / max(float(np.hypot(nx, ny)), 1.0)
+    solidity = float(n_solid) / max(bw * bh, 1.0)
+
+    # Third-moment skewness proxies (shape asymmetry)
+    std_x = float(np.sqrt(max(mxx, 1e-12)))
+    std_y = float(np.sqrt(max(myy, 1e-12)))
+    skew_x = float(np.mean(dx ** 3) / (std_x ** 3 + 1e-12))
+    skew_y = float(np.mean(dy ** 3) / (std_y ** 3 + 1e-12))
+
     return np.array(
         [
             solid_frac,
@@ -103,6 +144,10 @@ def geometric_features(mask: np.ndarray) -> np.ndarray:
             myy,
             mxy,
             char_l,
+            perim_norm,
+            solidity,
+            skew_x,
+            skew_y,
         ],
         dtype=np.float32,
     )
@@ -114,14 +159,14 @@ def mask_feature_vector(
     ds_h: int = MASK_DS_H,
     ds_w: int = MASK_DS_W,
 ) -> np.ndarray:
-    """Feature vector for MLP: geometric + solid profiles + coarse mask.
+    """Feature vector: geometric (+ multi-scale profiles + coarse mask if include_mask).
 
-    Linear baseline uses geometric features only (include_mask=False).
+    Linear / geom-only baselines use geometric features only (include_mask=False).
     """
     geom = geometric_features(mask)
     if not include_mask:
         return geom
-    profiles = solid_profiles(mask)
+    profiles = multi_scale_profiles(mask)
     # Coarse occupancy grid (keeps spatial structure without 512-D blow-up)
     ds = downsample_mask(mask, out_h=ds_h, out_w=ds_w).ravel()
     return np.concatenate([geom, profiles, ds]).astype(np.float32)
