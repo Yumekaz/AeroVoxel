@@ -1,5 +1,5 @@
 """
-Phase 6 — 3D flow field cache generator.
+3D flow field cache generator (offline only).
 
 Generates one precomputed 3D LBM-solved dataset:
   • Sphere in crossflow at 64×64×64 resolution
@@ -9,6 +9,7 @@ The output is saved in two forms:
   2. Center-slice 2D arrays (for the existing 2D particle viewer)
 
 Both are written to backend/app/assets/flow/ as .npy files.
+After generation, sphere_3d_v1 appears in GET /api/demo-cases.
 
 Usage:
     cd backend
@@ -43,7 +44,7 @@ def generate_3d_caches():
     os.makedirs(assets_dir, exist_ok=True)
 
     print("=" * 60)
-    print("AeroVoxel Phase 6 — 3D Flow Field Cache Generator")
+    print("AeroVoxel — 3D Flow Field Cache Generator (offline)")
     print("=" * 60)
 
     solver_info = get_solver_info()

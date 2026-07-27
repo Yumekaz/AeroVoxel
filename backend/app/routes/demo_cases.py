@@ -9,6 +9,9 @@ FLOW_ASSETS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "flow")
 )
 
+# Full catalog. Cases without on-disk velocity/pressure/mask arrays are hidden
+# from /demo-cases so the UI never offers a broken load path (e.g. sphere cache
+# missing until `python -m app.services.cache_generator_3d` is run).
 DEMO_CASES = [
     {
         "case_id": "sports_car_v1",
@@ -59,16 +62,34 @@ DEMO_CASES = [
         "grid": {"nx": 128, "ny": 64, "nz": 1},
     },
     {
-        "case_id": "sphere_3d_v1",
-        "name": "Sphere 3D (Real LBM)",
-        "mode": "real_3d_lbm",
-        "mode_label": "Real 3D LBM-generated dataset (D3Q19)",
-        "description": "Real solver-generated flow around a sphere — center-slice view.",
+        "case_id": "cylinder_v1",
+        "name": "Circular Cylinder (Validation)",
+        "mode": "cached_2d",
+        "mode_label": "Educational 2D LBM field",
+        "description": "Classic 2D bluff body for educational wake and stagnation visualization.",
         "explanation": (
-            "This flow field was computed by a real D3Q19 Lattice Boltzmann solver running on your "
-            "hardware. The sphere creates a symmetric stagnation zone at the front face and a "
-            "turbulent wake region behind it. Drag coefficient for a sphere at moderate Reynolds "
-            "number is approximately 0.47. This 2D view is a center-slice through the 3D domain."
+            "Oncoming flow stagnates on the windward face (high pressure), accelerates around the "
+            "shoulders, then separates and forms a recirculating wake leeward of the cylinder. "
+            "This is a classic educational bluff-body case — drag values are qualitative estimates, "
+            "not certified Cd measurements."
+        ),
+        "drag_coefficient_estimate": 1.1,
+        "lift_coefficient_estimate": 0.0,
+        "wake_score": 0.82,
+        "grid": {"nx": 128, "ny": 64, "nz": 1},
+    },
+    {
+        "case_id": "sphere_3d_v1",
+        "name": "Sphere 3D (Cached LBM)",
+        "mode": "real_3d_lbm",
+        "mode_label": "Cached 3D LBM center-slice (D3Q19, offline precompute)",
+        "description": "Offline D3Q19-generated flow around a sphere — center-slice view.",
+        "explanation": (
+            "This flow field was precomputed by a D3Q19 Lattice Boltzmann solver (offline cache, not "
+            "live 3D). The sphere creates a symmetric stagnation zone at the front face and a "
+            "wake region behind it. Drag coefficient for a sphere at moderate Reynolds number is "
+            "approximately 0.47 (educational estimate). This 2D view is a center-slice through the "
+            "3D domain. Generate missing assets with: python -m app.services.cache_generator_3d"
         ),
         "drag_coefficient_estimate": 0.47,
         "lift_coefficient_estimate": 0.0,
@@ -77,19 +98,42 @@ DEMO_CASES = [
     },
 ]
 
+
+def _case_assets_ready(case_id: str) -> bool:
+    """True only when velocity, pressure, and mask .npy files all exist on disk."""
+    required = (
+        f"{case_id}_velocity.npy",
+        f"{case_id}_pressure.npy",
+        f"{case_id}_mask.npy",
+    )
+    return all(os.path.exists(os.path.join(FLOW_ASSETS_DIR, name)) for name in required)
+
+
+def _available_demo_cases():
+    """Catalog entries that have loadable flow arrays (happy-path safe)."""
+    return [c for c in DEMO_CASES if _case_assets_ready(c["case_id"])]
+
+
 @router.get("/demo-cases")
 async def get_demo_cases():
-    """Return list of available precomputed cases."""
-    return DEMO_CASES
+    """Return demo cases that have precomputed flow assets available."""
+    return _available_demo_cases()
 
 @router.get("/flow-field/{case_id}")
 async def get_flow_field_metadata(case_id: str):
     """Return metadata for a specific case, including URLs to retrieve matrices."""
-    # Find matching case
     case = next((c for c in DEMO_CASES if c["case_id"] == case_id), None)
     if not case:
         raise HTTPException(status_code=404, detail="Case profile not found")
-        
+    if not _case_assets_ready(case_id):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Flow assets for '{case_id}' are not available. "
+                "For the 3D sphere cache run: python -m app.services.cache_generator_3d"
+            ),
+        )
+
     return {
         "case_id": case_id,
         "name": case["name"],

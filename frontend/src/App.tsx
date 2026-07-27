@@ -78,19 +78,21 @@ const FALLBACK_CASES: ActiveCase[] = [
     isCustom: false,
   },
   {
-    id: 'sphere_3d',
-    backendId: 'sphere_3d_v1',
-    name: 'Sphere 3D (Real LBM)',
-    desc: 'Real 3D LBM-generated flow around a sphere — center-slice view.',
-    drag: 0.47,
+    id: 'cylinder',
+    backendId: 'cylinder_v1',
+    name: 'Circular Cylinder (Validation)',
+    desc: 'Classic 2D bluff body for educational wake and stagnation visualization.',
+    drag: 1.1,
     lift: 0.0,
-    wake: 0.35,
-    mode: 'real_3d_lbm',
-    modeLabel: 'Real 3D LBM-generated dataset (D3Q19)',
+    wake: 0.82,
+    mode: 'cached_2d',
+    modeLabel: 'Educational 2D LBM field',
     explanation:
-      'This flow field was computed by a real D3Q19 Lattice Boltzmann solver running on your hardware. The sphere creates a symmetric stagnation zone at the front and a turbulent wake at the rear. The 2D center-slice shows the cross-section through the sphere midplane.',
+      'Oncoming flow stagnates on the windward face (high pressure), accelerates around the shoulders, then separates and forms a recirculating wake. Educational bluff-body case — not certified Cd.',
     isCustom: false,
   },
+  // sphere_3d_v1 is intentionally omitted from offline fallback: it only appears
+  // when backend reports assets (velocity/pressure/mask .npy) are present.
 ];
 
 function App() {
@@ -185,7 +187,11 @@ function App() {
     const checkHealth = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/health`);
-        setBackendStatus(response.ok ? 'connected' : 'disconnected');
+        if (response.ok) {
+          setBackendStatus('connected');
+        } else {
+          setBackendStatus('disconnected');
+        }
       } catch {
         setBackendStatus('disconnected');
       }
@@ -196,6 +202,22 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Honest offline labeling when backend is down (keep live solver results if already computed).
+  useEffect(() => {
+    if (backendStatus !== 'disconnected') return;
+    if (dataSource === 'computed') return;
+    setDataSource('offline_fallback');
+    if (!selectedCase.isCustom) {
+      setSimModeLabel('Offline fallback — procedural viewer (backend disconnected)');
+      setDemoCases(FALLBACK_CASES);
+      setSelectedCase((prev) =>
+        prev.isCustom
+          ? prev
+          : FALLBACK_CASES.find((c) => c.backendId === prev.backendId) ?? FALLBACK_CASES[0]
+      );
+    }
+  }, [backendStatus]);
+
   useEffect(() => {
     if (backendStatus !== 'connected') return;
 
@@ -205,9 +227,13 @@ function App() {
         if (!response.ok) return;
         const cases: ApiDemoCase[] = await response.json();
         const mapped = cases.map(toActiveCase);
-        setDemoCases(mapped);
+        // Only list cases the API says are asset-backed (hides sphere until cache exists).
+        setDemoCases(mapped.length > 0 ? mapped : FALLBACK_CASES);
         if (!selectedCase.isCustom) {
-          setSelectedCase((prev) => mapped.find((c) => c.backendId === prev.backendId) ?? mapped[0]);
+          setSelectedCase((prev) => {
+            const list = mapped.length > 0 ? mapped : FALLBACK_CASES;
+            return list.find((c) => c.backendId === prev.backendId) ?? list[0];
+          });
         }
       } catch (err) {
         console.warn('Failed to load demo cases from API, using fallback list.', err);
@@ -582,7 +608,17 @@ function App() {
           />
 
           <div className="viewer-overlay-left">
-            <div className={`mode-badge ${dataSource === 'computed' ? 'computed' : dataSource === 'real_3d_lbm' ? 'real-3d' : 'cached'}`}>
+            <div
+              className={`mode-badge ${
+                dataSource === 'computed'
+                  ? 'computed'
+                  : dataSource === 'real_3d_lbm'
+                    ? 'real-3d'
+                    : dataSource === 'offline_fallback'
+                      ? 'offline'
+                      : 'cached'
+              }`}
+            >
               <Layers size={13} />
               <span>
                 {simModeLabel}
@@ -739,16 +775,23 @@ function App() {
             {showTechnicalDetails && (
               <div className="technical-details">
                 <DetailRow label="Simulation mode" value={simModeLabel} />
-                <DetailRow label="Grid resolution" value="128 × 64 (2D)" />
+                <DetailRow
+                  label="Grid resolution"
+                  value={
+                    dataSource === 'real_3d_lbm'
+                      ? '64³ offline precompute → 2D center-slice'
+                      : '128 × 64 (2D)'
+                  }
+                />
                 <DetailRow
                   label="Data source"
                   value={
                     dataSource === 'computed'
                       ? 'Live 2D LBM solver'
                       : dataSource === 'real_3d_lbm'
-                        ? 'Real 3D LBM solver (D3Q19, center-slice)'
+                        ? 'Cached 3D LBM (D3Q19 center-slice, not live 3D)'
                         : dataSource === 'offline_fallback'
-                          ? 'Offline cached fallback'
+                          ? 'Offline fallback (no backend / no remote fields)'
                           : 'Precomputed demonstration field'
                   }
                 />

@@ -1,5 +1,10 @@
 # AeroVoxel Git Ignore
+# Private planning / thesis notes — never publish
 AeroVoxel_Project_Bible_SRS.md
+AeroVoxel_Thesis_Framing.md
+*_Project_Bible*.md
+*_Thesis_Framing.md
+*_Thesis_Plan.md
 
 # Node / Frontend
 node_modules/
@@ -32,6 +37,7 @@ backend/app/assets/flow/*.npy
 !backend/app/assets/flow/sports_car_v1_*.npy
 !backend/app/assets/flow/drone_v1_*.npy
 !backend/app/assets/flow/airfoil_v1_*.npy
+!backend/app/assets/flow/cylinder_v1_*.npy
 uploads/
 *.log
 terminals/

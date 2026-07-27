@@ -12,12 +12,12 @@ export function LandingScreen({ onTryDemo, onUpload }: LandingScreenProps) {
         <div className="landing-badge">Prototype · Educational Simulation</div>
         <h1 className="landing-title">AeroVoxel</h1>
         <p className="landing-pitch">
-          Turn a smartphone photo or video into an interactive virtual wind tunnel.
-          Visualize airflow, pressure, and wake behavior directly in your browser.
+          Educational virtual wind tunnel from smartphone imagery using lightweight
+          Lattice Boltzmann simulation. Explore airflow, pressure, and wake behavior in the browser.
         </p>
         <p className="landing-honesty">
-          AeroVoxel is a prototype-grade aerodynamic insight tool. It uses precomputed and
-          lightweight 2D LBM fields — not certified CFD or wind-tunnel testing.
+          Prototype-grade and educational only. Uses OpenCV silhouettes, template matching, and
+          CPU Lattice Boltzmann (live 2D + cached demos) — not certified CFD, not AI 3D reconstruction.
         </p>
         <div className="landing-actions">
           <button type="button" className="landing-btn primary" onClick={onTryDemo}>
@@ -32,15 +32,15 @@ export function LandingScreen({ onTryDemo, onUpload }: LandingScreenProps) {
         <div className="landing-features">
           <div className="landing-feature">
             <Info size={14} />
-            <span>3 template cases with cached 2D flow fields</span>
+            <span>Demo cases including circular cylinder validation</span>
           </div>
           <div className="landing-feature">
             <Info size={14} />
-            <span>Upload pipeline with silhouette extraction</span>
+            <span>Upload via OpenCV silhouette extraction</span>
           </div>
           <div className="landing-feature">
             <Info size={14} />
-            <span>Live 2D LBM solver + real 3D LBM dataset</span>
+            <span>Live 2D LBM on CPU + cached educational fields</span>
           </div>
         </div>
       </div>

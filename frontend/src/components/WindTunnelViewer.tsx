@@ -367,6 +367,18 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
           }
         }
         addVoxels(voxelGroup, coords);
+      } else if (caseId.includes('cylinder')) {
+        // Circular cylinder cross-section extruded along Z
+        for (let r = 0; r <= 0.7; r += 0.22) {
+          for (let th = 0; th < Math.PI * 2; th += Math.PI / 6) {
+            const x = r * Math.cos(th);
+            const y = r * Math.sin(th);
+            for (let z = -1.0; z <= 1.0; z += 0.35) {
+              coords.push([x, y, z]);
+            }
+          }
+        }
+        addVoxels(voxelGroup, coords);
       } else if (flowData) {
         buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, voxelGroup);
       } else {
@@ -481,6 +493,19 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
         group.add(wingGroup);
         group.position.set(0, 0, 0);
+      } else if (caseId === 'cylinder' || caseId === 'cylinder_v1') {
+        const cylGroup = new THREE.Group();
+        // Visual stand-in for the 2D circular-cylinder cross-section (extruded)
+        const cylGeom = new THREE.CylinderGeometry(0.75, 0.75, 2.4, 32);
+        cylGeom.rotateX(Math.PI / 2);
+        const cylMesh = new THREE.Mesh(cylGeom, mat);
+        cylMesh.castShadow = true;
+        cylMesh.receiveShadow = true;
+        cylGroup.add(cylMesh);
+        const wMesh = new THREE.Mesh(cylGeom, wireMat);
+        cylGroup.add(wMesh);
+        group.add(cylGroup);
+        group.position.set(0, 0, 0);
       } else if (flowData) {
         const extrudeGroup = new THREE.Group();
         buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, extrudeGroup);
@@ -552,6 +577,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
           if (caseId.includes('car')) obstacleRadius = 1.4;
           else if (caseId.includes('drone')) obstacleRadius = 1.5;
           else if (caseId.includes('airfoil')) obstacleRadius = 1.1;
+          else if (caseId.includes('cylinder')) obstacleRadius = 0.85;
 
           arrowsGroup.children.forEach((child) => {
             if (child instanceof THREE.ArrowHelper) {
@@ -649,6 +675,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
           if (caseId.includes('car')) obstacleRadius = 1.4;
           else if (caseId.includes('drone')) obstacleRadius = 1.5;
           else if (caseId.includes('airfoil')) obstacleRadius = 1.1;
+          else if (caseId.includes('cylinder')) obstacleRadius = 0.85;
 
           const speed = windSpeed * 0.15;
           const objectPos = new THREE.Vector3(0, obstacleRef.current ? obstacleRef.current.position.y : 0, 0);

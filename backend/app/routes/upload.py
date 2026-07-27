@@ -194,7 +194,7 @@ async def upload_file(file: UploadFile = File(...)):
     best_preset = "sports_car_v1"
     max_iou = 0.0
     
-    preset_files = ["sports_car_v1", "drone_v1", "airfoil_v1"]
+    preset_files = ["sports_car_v1", "drone_v1", "airfoil_v1", "cylinder_v1"]
     upload_mask = (binary_grid > 0).astype(bool)
     
     for preset in preset_files:
@@ -217,6 +217,8 @@ async def upload_file(file: UploadFile = File(...)):
         detected_object = "Quadcopter profile detected"
     elif best_preset == "airfoil_v1":
         detected_object = "Symmetric Wing profile detected"
+    elif best_preset == "cylinder_v1":
+        detected_object = "Circular cylinder profile detected"
 
     # Clean up uploaded raw source file to save storage
     if os.path.exists(temp_path):

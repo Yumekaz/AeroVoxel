@@ -82,6 +82,23 @@ def make_airfoil_mask():
     return mask
 
 
+def make_cylinder_mask():
+    """Circular cylinder for educational bluff-body validation (V1).
+
+    Placed upstream of domain midplane so a recirculating wake can develop.
+    Diameter ~16 lattice units on the shared 128×64 demo grid.
+    """
+    mask = np.zeros((NY, NX), dtype=bool)
+    cx, cy = 40, 32
+    radius = 8
+    r2 = radius * radius
+    for x in range(NX):
+        for y in range(NY):
+            if (x - cx) ** 2 + (y - cy) ** 2 <= r2:
+                mask[y, x] = True
+    return mask
+
+
 def generate_and_save_caches():
     assets_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets", "flow"))
     os.makedirs(assets_dir, exist_ok=True)
@@ -92,6 +109,7 @@ def generate_and_save_caches():
         ("sports_car_v1", make_car_mask()),
         ("drone_v1", make_drone_mask()),
         ("airfoil_v1", make_airfoil_mask()),
+        ("cylinder_v1", make_cylinder_mask()),
     ]
 
     solver = LbmSolver2D(nx=NX, ny=NY, tau=TAU, u_inlet=U_INLET)
