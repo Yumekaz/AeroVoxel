@@ -34,7 +34,7 @@ export function parseNpy(buffer: ArrayBuffer): NpyArray {
   // const minor = view.getUint8(7); // unused
 
   // 3. Read header length
-  let headerLength = 0;
+  let headerLength: number;
   let headerStart = 10;
   if (major === 1) {
     headerLength = view.getUint16(8, true); // Little-endian

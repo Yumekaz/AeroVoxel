@@ -51,6 +51,10 @@ backend/verify_mvp.py
 
 # Local evaluation outputs (thesis numbers / machine-specific timings)
 evaluation_outputs/
+backend/data/recon_inputs/
+backend/data/recon_outputs/
+backend/recon-venv/
+stable-fast-3d/
 AeroVoxel_Evaluation_Results.md
 
 # ML surrogate datasets and large model dumps (train locally)

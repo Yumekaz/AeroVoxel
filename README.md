@@ -15,7 +15,14 @@ Physical wind tunnels and production CFD are expensive, slow to set up, and hard
 
 It is built as a **full system**, not a single notebook: computer vision → simulation domain → Lattice Boltzmann (LBM) → Three.js viewer, plus an optional **machine-learning surrogate** trained on this project’s own LBM labels.
 
-> **Scope:** Educational and prototype-grade. **Not** certified CFD, **not** a substitute for professional wind-tunnel testing, and **not** AI-based 3D mesh reconstruction from video.
+> **Scope:** Educational and prototype-grade. **Not** certified CFD, **not** a substitute for professional wind-tunnel testing, and **not** perfect AI-based 3D reconstruction from video.
+
+## AI / ML modules
+
+1. **Educational LBM surrogate (CPU)** — a trained, evaluated scikit-learn model maps masks to this project's `cd_force_proxy` labels; metrics and baselines are in [`docs/ai_metrics.md`](docs/ai_metrics.md).
+2. **Neural 3D reconstruction (GPU, optional)** — the SF3D adapter turns a single phone image into `mesh.glb` and a center-slice `mask.npy` that can feed the existing LBM path. See [`backend/app/recon/README.md`](backend/app/recon/README.md).
+
+Neural reconstruction is best-effort prototype geometry, not metrology-grade scanning. The current interactive path remains 2D CPU LBM; no certified CFD or perfect video-to-3D claim is made.
 
 ---
 
@@ -156,6 +163,7 @@ These runs document **operating limits** (coarse grids, educational metrics, low
 | `POST` | `/api/simulate/simple` | Live 2D LBM |
 | `GET` | `/api/surrogate/status` | Checkpoint availability |
 | `POST` | `/api/surrogate/predict` | Fast educational Cd-proxy |
+| `GET` | `/api/recon/capability` | Report optional SF3D/CUDA capability without loading weights |
 
 ---
 

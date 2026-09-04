@@ -1,0 +1,11 @@
+# Optional neural reconstruction environment; keep out of requirements.txt so
+# the laptop-first CPU application remains lightweight.
+torch>=2.2
+Pillow>=10.0
+trimesh>=4.0
+rembg>=2.0
+tqdm>=4.66
+
+# SF3D itself is an official source checkout, not a PyPI dependency:
+# git clone https://github.com/Stability-AI/stable-fast-3d ../stable-fast-3d
+# pip install -r ../stable-fast-3d/requirements.txt

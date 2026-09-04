@@ -219,7 +219,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
 
     // Handle resizing dynamically using ResizeObserver (fixes 0px width/height layout initialization)
     const resizeObserver = new ResizeObserver((entries) => {
-      for (let entry of entries) {
+      for (const entry of entries) {
         const { width, height } = entry.contentRect;
         if (width === 0 || height === 0) continue;
         
@@ -588,7 +588,6 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
               let vx = speed;
               let vy = 0;
               let pVal = 0.0;
-              let isObst = false;
               
               if (flowData) {
                 const nx = flowData.nx;
@@ -598,7 +597,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
                 const grid_y = Math.max(0, Math.min(ny - 1, (ny - 1) - Math.floor(((slicePosition + 2) / 4) * (ny - 1))));
                 
                 const offset = grid_y * nx + grid_x;
-                isObst = flowData.mask[offset] > 0;
+                const isObst = flowData.mask[offset] > 0;
                 
                 if (isObst) {
                   vx = 0.001;
@@ -687,7 +686,6 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
             let vy = 0;
             let vz = 0;
             let pressureVal = 0.0;
-            let isObstacle = false;
 
             if (flowData) {
               const nx = flowData.nx;
@@ -698,7 +696,7 @@ export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
               
               const offset = grid_y * nx + grid_x;
               
-              isObstacle = flowData.mask[offset] > 0;
+              const isObstacle = flowData.mask[offset] > 0;
               
               if (isObstacle) {
                 p.pos.x = -8.0;

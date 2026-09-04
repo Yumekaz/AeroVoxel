@@ -149,6 +149,15 @@ function App() {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [fps, setFps] = useState(60);
 
+  const effectiveDataSource: DataSource =
+    backendStatus === 'disconnected' && dataSource !== 'computed' ? 'offline_fallback' : dataSource;
+  const effectiveSimModeLabel =
+    effectiveDataSource === 'offline_fallback'
+      ? 'Offline fallback — procedural viewer (backend disconnected)'
+      : simModeLabel;
+  const effectiveSurrogateAvailable = backendStatus === 'disconnected' ? null : surrogateAvailable;
+  const effectiveSurrogateHint = backendStatus === 'disconnected' ? null : surrogateHint;
+
   const storeMaskForSurrogate = useCallback(
     (data: ArrayLike<number>, nx: number, ny: number) => {
       const n = nx * ny;
@@ -242,8 +251,6 @@ function App() {
   // Surrogate model availability (does not replace LBM)
   useEffect(() => {
     if (backendStatus !== 'connected') {
-      setSurrogateAvailable(null);
-      setSurrogateHint(null);
       return;
     }
     let cancelled = false;
@@ -269,22 +276,6 @@ function App() {
     };
   }, [backendStatus]);
 
-  // Honest offline labeling when backend is down (keep live solver results if already computed).
-  useEffect(() => {
-    if (backendStatus !== 'disconnected') return;
-    if (dataSource === 'computed') return;
-    setDataSource('offline_fallback');
-    if (!selectedCase.isCustom) {
-      setSimModeLabel('Offline fallback — procedural viewer (backend disconnected)');
-      setDemoCases(FALLBACK_CASES);
-      setSelectedCase((prev) =>
-        prev.isCustom
-          ? prev
-          : FALLBACK_CASES.find((c) => c.backendId === prev.backendId) ?? FALLBACK_CASES[0]
-      );
-    }
-  }, [backendStatus]);
-
   useEffect(() => {
     if (backendStatus !== 'connected') return;
 
@@ -308,13 +299,16 @@ function App() {
     };
 
     fetchCases();
-  }, [backendStatus]);
+  }, [backendStatus, selectedCase.isCustom]);
 
   useEffect(() => {
-    if (dataSource === 'computed') return;
+    if (effectiveDataSource === 'computed') return;
     if (selectedCase.isCustom && !closestPreset) return;
-    loadFlowForCase(selectedCase);
-  }, [selectedCase, backendStatus, closestPreset, dataSource, loadFlowForCase]);
+    const load = async () => {
+      await loadFlowForCase(selectedCase);
+    };
+    void load();
+  }, [selectedCase, backendStatus, closestPreset, effectiveDataSource, loadFlowForCase]);
 
   const runLiveSimulation = async () => {
     if (!activeJobId) return;
@@ -530,7 +524,7 @@ function App() {
 
   const runSurrogatePredict = async () => {
     if (!maskForSurrogate || backendStatus !== 'connected') return;
-    if (surrogateAvailable === false) return;
+    if (effectiveSurrogateAvailable === false) return;
 
     setSurrogateLoading(true);
     setSurrogateError(null);
@@ -587,7 +581,7 @@ function App() {
   };
 
   const angleNeedsRerun =
-    dataSource === 'computed' &&
+    effectiveDataSource === 'computed' &&
     lastSolverAngle !== null &&
     Math.abs(lastSolverAngle - windAngle) > 0.5;
 
@@ -700,10 +694,10 @@ function App() {
                 value={windAngle}
                 onChange={(e) => setWindAngle(Number(e.target.value))}
               />
-              {dataSource === 'computed' && angleNeedsRerun && (
+              {effectiveDataSource === 'computed' && angleNeedsRerun && (
                 <p className="control-hint">Re-run LBM solver to apply new angle to flow field.</p>
               )}
-              {dataSource === 'cached' && (
+              {effectiveDataSource === 'cached' && (
                 <p className="control-hint">Cached fields: angle rotates the 3D view. Run LBM after upload for angled inlet flow.</p>
               )}
             </div>
@@ -754,18 +748,18 @@ function App() {
           <div className="viewer-overlay-left">
             <div
               className={`mode-badge ${
-                dataSource === 'computed'
+                effectiveDataSource === 'computed'
                   ? 'computed'
-                  : dataSource === 'real_3d_lbm'
+                  : effectiveDataSource === 'real_3d_lbm'
                     ? 'real-3d'
-                    : dataSource === 'offline_fallback'
+                    : effectiveDataSource === 'offline_fallback'
                       ? 'offline'
                       : 'cached'
               }`}
             >
               <Layers size={13} />
               <span>
-                {simModeLabel}
+                {effectiveSimModeLabel}
                 {loadingFlowData ? ' (loading…)' : ''}
               </span>
             </div>
@@ -868,26 +862,26 @@ function App() {
                       className="run-solver-btn surrogate-btn"
                       onClick={runSurrogatePredict}
                       disabled={
-                        surrogateAvailable === false ||
+                        effectiveSurrogateAvailable === false ||
                         surrogateLoading ||
                         runningSolver ||
                         uploading
                       }
                       title={
-                        surrogateAvailable === false
-                          ? surrogateHint ?? 'Surrogate model not trained'
+                        effectiveSurrogateAvailable === false
+                          ? effectiveSurrogateHint ?? 'Surrogate model not trained'
                           : 'Fast educational Cd-proxy from the current mask (does not replace LBM)'
                       }
                     >
                       {surrogateLoading ? 'Predicting…' : 'Predict Cd (ML surrogate)'}
                     </button>
-                    {surrogateAvailable === false && (
+                    {effectiveSurrogateAvailable === false && (
                       <p className="surrogate-status-msg">
                         ML model unavailable
-                        {surrogateHint ? ` — ${surrogateHint}` : '. Train via backend scripts first.'}
+                        {effectiveSurrogateHint ? ` — ${effectiveSurrogateHint}` : '. Train via backend scripts first.'}
                       </p>
                     )}
-                    {surrogateAvailable === null && (
+                    {effectiveSurrogateAvailable === null && (
                       <p className="surrogate-status-msg">Checking surrogate model…</p>
                     )}
                     {surrogateError && (
@@ -928,19 +922,19 @@ function App() {
                   type="button"
                   className="run-solver-btn surrogate-btn"
                   onClick={runSurrogatePredict}
-                  disabled={surrogateAvailable === false || surrogateLoading}
+                  disabled={effectiveSurrogateAvailable === false || surrogateLoading}
                   title={
-                    surrogateAvailable === false
-                      ? surrogateHint ?? 'Surrogate model not trained'
+                    effectiveSurrogateAvailable === false
+                      ? effectiveSurrogateHint ?? 'Surrogate model not trained'
                       : 'Predict educational Cd force proxy'
                   }
                 >
                   {surrogateLoading ? 'Predicting…' : 'Predict Cd (ML surrogate)'}
                 </button>
-                {surrogateAvailable === false && (
+                {effectiveSurrogateAvailable === false && (
                   <p className="surrogate-status-msg">
                     ML model unavailable
-                    {surrogateHint ? ` — ${surrogateHint}` : '. Train via backend scripts first.'}
+                    {effectiveSurrogateHint ? ` — ${effectiveSurrogateHint}` : '. Train via backend scripts first.'}
                   </p>
                 )}
                 {surrogateError && (
@@ -1014,11 +1008,11 @@ function App() {
             </button>
             {showTechnicalDetails && (
               <div className="technical-details">
-                <DetailRow label="Simulation mode" value={simModeLabel} />
+                <DetailRow label="Simulation mode" value={effectiveSimModeLabel} />
                 <DetailRow
                   label="Grid resolution"
                   value={
-                    dataSource === 'real_3d_lbm'
+                    effectiveDataSource === 'real_3d_lbm'
                       ? '64³ offline precompute → 2D center-slice'
                       : '128 × 64 (2D)'
                   }
@@ -1026,11 +1020,11 @@ function App() {
                 <DetailRow
                   label="Data source"
                   value={
-                    dataSource === 'computed'
+                    effectiveDataSource === 'computed'
                       ? 'Live 2D LBM solver'
-                      : dataSource === 'real_3d_lbm'
+                      : effectiveDataSource === 'real_3d_lbm'
                         ? 'Cached 3D LBM (D3Q19 center-slice, not live 3D)'
-                        : dataSource === 'offline_fallback'
+                        : effectiveDataSource === 'offline_fallback'
                           ? 'Offline fallback (no backend / no remote fields)'
                           : 'Precomputed demonstration field'
                   }
@@ -1039,7 +1033,7 @@ function App() {
                 <DetailRow
                   label="Wind angle"
                   value={
-                    dataSource === 'computed' && lastSolverAngle !== null
+                    effectiveDataSource === 'computed' && lastSolverAngle !== null
                       ? `${lastSolverAngle}° (applied to solver inlet)`
                       : `${windAngle}° (visual / pending solver run)`
                   }
@@ -1048,7 +1042,7 @@ function App() {
                   <strong>Known limitations</strong>
                   <ul>
                     <li>2D educational simulation — not full 3D CFD</li>
-                    <li>3D object geometry is illustrative, not reconstructed from video</li>
+                    <li>Optional neural reconstruction is best-effort, not metrology-grade</li>
                     <li>Uploads map to closest template until LBM solver runs</li>
                     <li>Drag/lift values are heuristic estimates, not wind-tunnel validated</li>
                   </ul>
