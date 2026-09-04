@@ -1,6 +1,6 @@
-# Optional neural reconstruction environment; keep out of requirements.txt so
-# the laptop-first CPU application remains lightweight.
-torch>=2.2
+# Optional neural reconstruction dependencies; keep out of requirements.txt so
+# the laptop-first CPU application remains lightweight. Install a deliberate
+# PyTorch runtime separately (see requirements-recon-cuda126.txt).
 Pillow>=10.0
 trimesh>=4.0
 rembg>=2.0

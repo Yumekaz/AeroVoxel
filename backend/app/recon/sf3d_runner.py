@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from contextlib import nullcontext
 from typing import Any
@@ -12,6 +13,20 @@ from app.recon.export_to_aerovoxel import mesh_to_center_slice_mask
 
 
 MODEL_ID = "stabilityai/stable-fast-3d"
+
+
+def _add_official_checkout_to_path() -> None:
+    """Make an official source checkout importable without bundling it in AeroVoxel."""
+    configured = os.environ.get("AEROVOXEL_SF3D_REPO")
+    candidates = [
+        configured,
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "stable-fast-3d")),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(os.path.join(candidate, "sf3d")):
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+            return
 
 
 def run_sf3d(
@@ -34,6 +49,7 @@ def run_sf3d(
         raise ValueError("foreground_ratio must be in (0, 1]")
     if texture_resolution < 256:
         raise ValueError("texture_resolution must be at least 256")
+    _add_official_checkout_to_path()
     try:
         import torch
         from PIL import Image
@@ -41,8 +57,8 @@ def run_sf3d(
         from sf3d.utils import resize_foreground
     except ImportError as exc:
         raise RuntimeError(
-            "SF3D is not installed. Follow backend/app/recon/README.md and "
-            "install backend/requirements-recon.txt plus the official SF3D repository."
+            "SF3D runtime dependencies are incomplete. Follow backend/app/recon/README.md; "
+            f"the first missing import was: {exc}"
         ) from exc
 
     selected_device = device or ("cuda" if torch.cuda.is_available() else "cpu")

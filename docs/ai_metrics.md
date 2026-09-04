@@ -5,7 +5,7 @@ This is the side-by-side metrics snapshot for the project's AI modules.
 | Module | Input → output | Evidence | Validation status |
 |---|---|---|---|
 | Educational surrogate (baseline AI module) | 2D mask → `cd_force_proxy` | [`backend/app/ml/artifacts/last_eval.json`](../backend/app/ml/artifacts/last_eval.json), trained joblib artifact, ablation scripts | CPU metrics committed; labels are this project's LBM proxies |
-| Stable Fast 3D neural reconstruction | phone image → mesh → center-slice mask | [`backend/app/recon/README.md`](../backend/app/recon/README.md), `scripts/run_recon_demo.py`, per-run `result.json` | Requires optional CUDA/SF3D environment; no local GPU verification in this checkout |
+| Stable Fast 3D neural reconstruction | phone image → mesh → center-slice mask | [`backend/app/recon/README.md`](../backend/app/recon/README.md), `scripts/run_recon_demo.py`, `scripts/evaluate_recon.py`, per-run `result.json` | Official source checkout is present locally; execution still requires a working model runtime and suitable VRAM |
 
 ## Recon evaluation record
 
@@ -19,4 +19,4 @@ The table below is deliberately a record, not fabricated benchmark data. Populat
 | R4 | Clean phone capture | NOT RUN | Awaiting consented capture and GPU run | N | — | — |
 | R5 | Clean phone capture | NOT RUN | Awaiting consented capture and GPU run | N | — | — |
 
-The current machine reports CPU-only PyTorch and `nvidia-smi` permission failure. Therefore GPU success, five real captures, and GPU performance are not claimed here.
+The current machine exposes an RTX 3050 Laptop GPU through Windows inventory, but the device is in Code 43 (`CM_PROB_FAILED_POST_START`), `nvidia-smi` cannot access it, and the installed PyTorch is CPU-only. A CUDA 12.6 requirements file is provided, but installing it before repairing the host display device would not produce valid GPU evidence. Run `scripts/check_recon_environment.py` after driver repair; run `scripts/evaluate_recon.py` with five consented `PHONE_CAPTURE` rows to produce the evidence table.

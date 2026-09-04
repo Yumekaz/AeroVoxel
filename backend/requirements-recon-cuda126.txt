@@ -1,0 +1,8 @@
+# RTX 30-series setup: CUDA-enabled wheels include the CUDA runtime; nvcc is
+# not required for ordinary PyTorch inference. Repair the Windows NVIDIA
+# display device before expecting torch.cuda.is_available() to become true.
+--index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://pypi.org/simple
+torch==2.11.0
+torchvision==0.26.0
+-r requirements-recon.txt

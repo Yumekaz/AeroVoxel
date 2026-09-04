@@ -1,0 +1,6 @@
+case_id,input_type,image_path
+R1,PHONE_CAPTURE,data/recon_inputs/R1.jpg
+R2,PHONE_CAPTURE,data/recon_inputs/R2.jpg
+R3,PHONE_CAPTURE,data/recon_inputs/R3.jpg
+R4,PHONE_CAPTURE,data/recon_inputs/R4.jpg
+R5,PHONE_CAPTURE,data/recon_inputs/R5.jpg

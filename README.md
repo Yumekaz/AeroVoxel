@@ -164,6 +164,7 @@ These runs document **operating limits** (coarse grids, educational metrics, low
 | `GET` | `/api/surrogate/status` | Checkpoint availability |
 | `POST` | `/api/surrogate/predict` | Fast educational Cd-proxy |
 | `GET` | `/api/recon/capability` | Report optional SF3D/CUDA capability without loading weights |
+| `GET` | `/api/recon/diagnostics` | Non-destructive runtime, NVIDIA, and display-device diagnostics |
 
 ---
 

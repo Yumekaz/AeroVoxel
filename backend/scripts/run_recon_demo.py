@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.recon.sf3d_runner import run_sf3d
+from app.recon.engine import select_reconstruction_engine
 from app.recon.integration import register_mask_for_simulation
 
 
@@ -26,13 +26,19 @@ def main() -> int:
         help="Copy mask into app/assets/uploads and print a job_id for /api/simulate/simple",
     )
     args = parser.parse_args()
-    result = run_sf3d(
-        args.image,
-        args.output_dir,
-        model_id=args.model,
-        device=args.device,
-        texture_resolution=args.texture_resolution,
-    )
+    engine = select_reconstruction_engine("sf3d")
+    if args.model == "stabilityai/stable-fast-3d":
+        result = engine.reconstruct(args.image, args.output_dir, device=args.device)
+    else:
+        from app.recon.sf3d_runner import run_sf3d
+
+        result = run_sf3d(
+            args.image,
+            args.output_dir,
+            model_id=args.model,
+            device=args.device,
+            texture_resolution=args.texture_resolution,
+        )
     if args.register_for_api:
         uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app", "assets", "uploads"))
         result["simulation_job"] = register_mask_for_simulation(result["mask"]["mask_path"], uploads_dir)
