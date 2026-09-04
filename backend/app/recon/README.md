@@ -39,6 +39,14 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 The model weights are downloaded by Hugging Face on first run and are deliberately not committed. SF3D's official documentation reports about 6 GB VRAM for its default run; this laptop exposes 4 GB, so the 512 texture setting and batch size 1 are a constrained experiment, not a guarantee of fit. The CUDA requirements file deliberately installs a CUDA-enabled wheel instead of letting generic PyPI resolution select CPU-only PyTorch. The runner uses CUDA autocast FP16 and records peak allocated VRAM when CUDA is active. Set `AEROVOXEL_SF3D_REPO` if the official checkout is stored elsewhere.
 
+Latest host check (2026-09-04): Windows PnP reports the RTX 3050 as
+`OK` with `CM_PROB_NONE`, and `nvidia-smi` reports driver 616.56 and 4096 MiB
+of VRAM. The active project interpreter is still `torch 2.11.0+cpu`; installing
+the isolated CUDA wheel was attempted through pip, curl, and Windows BITS but
+the 2.6 GB download repeatedly failed with TLS/security transport errors. Do
+not describe CUDA or SF3D as validated until the CUDA wheel is installed and a
+real CUDA tensor operation succeeds.
+
 ## Run and integrate
 
 ```powershell

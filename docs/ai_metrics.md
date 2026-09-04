@@ -26,4 +26,12 @@ serialized meshes reported finite vertices, zero degenerate faces, and
 `watertight=true`. These measurements describe this Windows laptop and are
 not transferable performance guarantees.
 
-The current machine exposes an RTX 3050 Laptop GPU through Windows inventory, but the device is in Code 43 (`CM_PROB_FAILED_POST_START`), `nvidia-smi` cannot access it, and the installed PyTorch is CPU-only. The real CPU alternative is verified; GPU/SF3D evidence remains blocked by the host driver and the device's 4 GB VRAM versus SF3D's documented roughly 6 GB default. A CUDA 12.6 requirements file is provided for later activation. Run `scripts/check_recon_environment.py` after driver repair; run `scripts/evaluate_recon.py` with five consented `PHONE_CAPTURE` rows to produce the real-capture evidence table.
+The current machine now reports the RTX 3050 as healthy through Windows PnP
+(`CM_PROB_NONE`), and `nvidia-smi` communicates with it, reporting driver
+616.56 and 4096 MiB VRAM. The active project PyTorch remains CPU-only because
+the isolated CUDA 12.6 wheel download failed repeatedly with Windows TLS/BITS
+security errors. The real CPU alternative is verified; CUDA/SF3D evidence
+remains unverified, and the device's 4 GB VRAM is below SF3D's documented
+roughly 6 GB default. Install the CUDA requirements after the wheel transfer
+is available, then require a successful real CUDA tensor test before running
+SF3D.
