@@ -1,0 +1,6 @@
+case_id,input_type,image_path
+SYNTH_01,SYNTHETIC_EVALUATION,../evaluation_outputs/phone_like_photos/phone_like_01_circle.jpg
+SYNTH_02,SYNTHETIC_EVALUATION,../evaluation_outputs/phone_like_photos/phone_like_02_car.jpg
+SYNTH_03,SYNTHETIC_EVALUATION,../evaluation_outputs/phone_like_photos/phone_like_03_airfoil.jpg
+SYNTH_04,SYNTHETIC_EVALUATION,../evaluation_outputs/phone_like_photos/phone_like_04_drone.jpg
+SYNTH_05,SYNTHETIC_EVALUATION,../evaluation_outputs/phone_like_photos/phone_like_05_box.jpg

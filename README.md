@@ -20,7 +20,7 @@ It is built as a **full system**, not a single notebook: computer vision → sim
 ## AI / ML modules
 
 1. **Educational LBM surrogate (CPU)** — a trained, evaluated scikit-learn model maps masks to this project's `cd_force_proxy` labels; metrics and baselines are in [`docs/ai_metrics.md`](docs/ai_metrics.md).
-2. **Neural 3D reconstruction (GPU, optional)** — the SF3D adapter turns a single phone image into `mesh.glb` and a center-slice `mask.npy` that can feed the existing LBM path. See [`backend/app/recon/README.md`](backend/app/recon/README.md).
+2. **Neural 3D reconstruction (hardware-aware)** — SF3D is the preferred GPU adapter when its runtime and VRAM requirements are met; Depth Anything V2 Small is a real CPU/CUDA alternative that produces a depth-conditioned mesh and center-slice `mask.npy`; OpenCV remains the explicit final 2D fallback. See [`backend/app/recon/README.md`](backend/app/recon/README.md).
 
 Neural reconstruction is best-effort prototype geometry, not metrology-grade scanning. The current interactive path remains 2D CPU LBM; no certified CFD or perfect video-to-3D claim is made.
 

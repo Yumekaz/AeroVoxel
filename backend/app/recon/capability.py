@@ -62,6 +62,7 @@ def get_recon_capability() -> dict[str, Any]:
 
     sf3d_available = _module_available("sf3d")
     sf3d_importable, sf3d_import_error = _sf3d_importable()
+    depth_anything_available = bool(torch_available and _module_available("transformers"))
     trimesh_available = _module_available("trimesh")
     rembg_available = _module_available("rembg")
     return {
@@ -75,6 +76,7 @@ def get_recon_capability() -> dict[str, Any]:
         "sf3d_import_error": sf3d_import_error,
         "trimesh_available": trimesh_available,
         "rembg_available": rembg_available,
+        "depth_anything_available": depth_anything_available,
         "ready_for_inference": bool(torch_available and sf3d_importable and trimesh_available),
         "recommended_device": "cuda" if cuda_available else "cpu",
     }

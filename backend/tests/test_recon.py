@@ -10,7 +10,9 @@ from app.recon.capability import get_recon_capability
 from app.recon.integration import register_mask_for_simulation
 from app.recon.export_to_aerovoxel import mesh_to_center_slice_mask
 from app.recon.evaluation import evaluate_manifest, load_manifest
-from app.recon.engine import select_reconstruction_engine
+from app.recon.engine import DepthAnythingEngine, OpenCV2DFallbackEngine, select_reconstruction_engine
+import app.recon.engine as engine_module
+from app.recon.depth_mesh import depth_map_to_mesh, validate_mesh_file
 from app.recon.sf3d_runner import run_sf3d
 
 
@@ -75,6 +77,38 @@ def test_evaluation_harness_records_typed_failures(tmp_path) -> None:
     assert summary["results"][0]["status"] == "FAILED"
 
 
-def test_engine_selection_does_not_silently_downgrade() -> None:
-    with pytest.raises(RuntimeError, match="No reconstruction engine"):
-        select_reconstruction_engine()
+def test_engine_selection_prefers_real_cpu_ml_before_opencv() -> None:
+    engine = select_reconstruction_engine()
+    assert isinstance(engine, DepthAnythingEngine)
+    assert not isinstance(engine, OpenCV2DFallbackEngine)
+    assert "SF3D unavailable" in engine.selection_reason
+
+
+def test_depth_mesh_is_real_serializable_geometry(tmp_path) -> None:
+    depth = np.linspace(0.1, 1.0, 64 * 64, dtype=np.float32).reshape(64, 64)
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[12:52, 16:48] = True
+    mesh = depth_map_to_mesh(depth, mask, max_size=64)
+    path = tmp_path / "depth_mesh.glb"
+    mesh.export(path)
+    stats = validate_mesh_file(str(path))
+    assert stats["valid"] is True
+    assert stats["vertices"] > 0
+    assert stats["faces"] > 0
+
+
+def test_engine_selection_matrix_has_explicit_final_fallback(monkeypatch) -> None:
+    unavailable = {
+        "ready_for_inference": False,
+        "depth_anything_available": False,
+        "sf3d_importable": False,
+        "sf3d_import_error": "missing test dependency",
+    }
+    monkeypatch.setattr(engine_module, "get_recon_capability", lambda: unavailable)
+    assert isinstance(select_reconstruction_engine("auto"), OpenCV2DFallbackEngine)
+    with pytest.raises(RuntimeError, match="SF3D was explicitly requested"):
+        select_reconstruction_engine("sf3d")
+    with pytest.raises(RuntimeError, match="Depth Anything"):
+        select_reconstruction_engine("depth_anything")
+    with pytest.raises(ValueError, match="preferred"):
+        select_reconstruction_engine("not-an-engine")

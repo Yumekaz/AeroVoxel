@@ -1,0 +1,6 @@
+# CPU setup for the real Depth Anything V2 reconstruction alternative.
+# Keep this separate from the CUDA wheel so local CPU development is safe.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0
+torchvision==0.26.0
+-r requirements-recon.txt

@@ -1,6 +1,26 @@
 # Optional neural reconstruction
 
-AeroVoxel's primary GPU path uses the real [Stable Fast 3D (SF3D)](https://github.com/Stability-AI/stable-fast-3d) model. It takes one object image, exports a mesh, then voxelizes the mesh's center slice into the existing `(ny=64, nx=128)` mask contract. The mask can be used by the same educational D2Q9 LBM endpoint as an uploaded silhouette.
+AeroVoxel uses a hardware-aware reconstruction engine chain:
+
+1. SF3D when its full runtime and hardware are available.
+2. Depth Anything V2 Small on CPU/CUDA as the practical real-ML alternative. It predicts monocular depth, creates a depth-conditioned thickened mesh, then exports the center-slice mask.
+3. OpenCV 2D silhouette only when both ML engines are unavailable.
+
+The first two are real model-based inference paths; the last is explicitly not 3D or ML.
+
+On a CPU-only machine, install the real alternative explicitly:
+
+```powershell
+cd backend
+pip install -r requirements-recon-cpu.txt
+python scripts/run_recon_demo.py C:\path\to\photo.jpg --engine depth_anything --device cpu --output-dir data/recon_outputs\R1
+```
+
+The first run downloads `depth-anything/Depth-Anything-V2-Small-hf` from the
+Hugging Face Hub. Subsequent requests reuse the in-process model cache. The
+alternative is monocular relative-depth reconstruction: it produces a closed,
+depth-conditioned relief mesh and a normalized center slice, but it cannot
+recover hidden surfaces or metric scale from one image.
 
 ## Setup on an RTX 3050
 
@@ -22,32 +42,44 @@ The model weights are downloaded by Hugging Face on first run and are deliberate
 ## Run and integrate
 
 ```powershell
-python scripts/run_recon_demo.py C:\path\to\phone-photo.jpg --output-dir data/recon_outputs\R1 --register-for-api
+python scripts/run_recon_demo.py C:\path\to\phone-photo.jpg --engine auto --output-dir data/recon_outputs\R1 --register-for-api
 ```
 
-The output contains `mesh.glb`, `mask.npy`, and `result.json`. With `--register-for-api`, the validated mask is copied into the existing upload-job storage and the result includes a UUID for `/api/simulate/simple`. This is the L1 integration boundary; the browser does not launch a multi-minute GPU job.
+The output contains `mesh.glb`, `depth.npy`, `depth_preview.png`, `mask.npy`, and `result.json`. `result.json` reports the selected engine, device, fallback reason, timings, mesh validity, serialized-file validity, and mask statistics. With `--register-for-api`, the validated mask is copied into the existing upload-job storage and the result includes a UUID for `/api/simulate/simple`. This is the L1 integration boundary; the browser does not launch a multi-minute GPU job.
 
-The engine-selection boundary currently has one real 3D implementation, SF3D.
-The existing OpenCV upload pipeline is retained as an explicit 2D silhouette
-fallback, never relabeled as 3D. TripoSR was evaluated as an alternative but
-its official default also reports about 6 GB VRAM, so it is not a credible
-fallback for this 4 GB device; adding a second unverified heavy backend would
-increase setup risk without removing the host driver blocker.
+The engine-selection boundary keeps SF3D as the preferred real 3D engine,
+selects Depth Anything V2 Small when SF3D is unavailable, and only then uses
+the existing OpenCV upload path as a 2D fallback. TripoSR was evaluated as an
+alternative but its official default also reports about 6 GB VRAM, so it is
+not a credible fallback for this 4 GB device; adding a second unverified heavy
+backend would increase setup risk without removing the host driver blocker.
 
-If CUDA is unavailable, `--device cpu` is supported for smoke testing only and is not a claim that CPU reconstruction is practical. SF3D's CPU backend is a real computation but is not treated as a production fallback on a 16 GB Windows laptop. If SF3D or trimesh is missing, the command fails with an actionable message rather than falling back to a fake mesh.
+If CUDA is unavailable, `--device cpu` runs the real Depth Anything alternative. SF3D's CPU backend is a real computation but is not treated as the practical fallback on a 16 GB Windows laptop. If SF3D or the alternative runtime is missing, selection reaches the explicit OpenCV 2D fallback; that path never claims to be 3D or ML.
 
 ## Diagnostics and reproducible evaluation
 
 ```powershell
 python scripts/check_recon_environment.py
 python scripts/evaluate_recon.py app/recon/recon_manifest.example.csv
+# After generating the labeled synthetic fixtures:
+python scripts/run_phone_photo_tests.py --n 5 --seed 7
+python scripts/evaluate_recon.py app/recon/recon_manifest.synthetic.csv --engine depth_anything --device cpu --output-dir ..\evaluation_outputs\depth_anything_five_case_verified
 ```
 
 The evaluator requires a typed CSV (`PHONE_CAPTURE`, `PUBLIC_DATASET`, or
 `SYNTHETIC_EVALUATION`) and writes per-case JSON/CSV records. Missing inputs,
 missing dependencies, and model failures remain failures; they are never
 converted into benchmark successes. Use `backend/data/recon_inputs/` for
-consented captures and keep that directory gitignored.
+consented captures and keep that directory gitignored. The committed synthetic
+manifest is explicitly `SYNTHETIC_EVALUATION`; it must not be reported as five
+real phone captures.
+
+The verified local CPU run on 2026-09-04 produced 5/5 successful cases. Every
+case produced a watertight GLB with finite, non-degenerate geometry and a
+non-empty `(64,128)` solver mask. The five-case wall time was 52.026 seconds
+in the first cached run; later runs are machine-load dependent. These are
+pipeline/output-validity results, not a ground-truth reconstruction-quality
+benchmark.
 
 ## Limits
 

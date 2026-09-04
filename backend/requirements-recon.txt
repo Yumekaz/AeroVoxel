@@ -5,6 +5,8 @@ Pillow>=10.0
 trimesh>=4.0
 rembg>=2.0
 tqdm>=4.66
+transformers>=4.50
+safetensors>=0.4
 
 # SF3D itself is an official source checkout, not a PyPI dependency:
 # git clone https://github.com/Stability-AI/stable-fast-3d ../stable-fast-3d

@@ -37,6 +37,7 @@ def mesh_to_center_slice_mask(
     ny: int = 64,
     z_fraction: float = 0.5,
     fill: bool = True,
+    voxel_resolution_factor: float = 2.0,
 ) -> dict[str, Any]:
     """Voxelize a mesh and export its middle Z slice as a solver-ready mask.
 
@@ -50,6 +51,8 @@ def mesh_to_center_slice_mask(
         raise ValueError("nx and ny must both be at least 16")
     if not 0.0 <= z_fraction <= 1.0:
         raise ValueError("z_fraction must be in [0, 1]")
+    if voxel_resolution_factor <= 0:
+        raise ValueError("voxel_resolution_factor must be positive")
 
     mesh = _load_mesh(mesh_path)
     bounds = np.asarray(mesh.bounds, dtype=np.float64)
@@ -58,7 +61,7 @@ def mesh_to_center_slice_mask(
         raise ValueError("Mesh has degenerate or non-finite bounds")
 
     # A pitch based on the largest XY extent gives a predictable memory bound.
-    target_pixels = max(nx, ny) * 2
+    target_pixels = max(16, int(round(max(nx, ny) * voxel_resolution_factor)))
     pitch = float(max(extent[0], extent[1], extent[2]) / target_pixels)
     voxels = mesh.voxelized(pitch)
     if fill:
@@ -82,6 +85,7 @@ def mesh_to_center_slice_mask(
         "solid_cells": int(np.sum(resized)),
         "solid_fraction": float(np.mean(resized)),
         "z_fraction": z_fraction,
+        "voxel_resolution_factor": voxel_resolution_factor,
         "voxel_grid_shape": list(dense.shape),
         "note": "Best-effort center slice; scale is normalized and not metrology-grade.",
     }

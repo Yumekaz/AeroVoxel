@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from app.recon.sf3d_runner import run_sf3d
+from app.recon.engine import select_reconstruction_engine
 
 VALID_INPUT_TYPES = {"PHONE_CAPTURE", "PUBLIC_DATASET", "SYNTHETIC_EVALUATION"}
 
@@ -42,12 +42,14 @@ def load_manifest(path: str) -> list[dict[str, str]]:
 def evaluate_manifest(
     manifest_path: str,
     output_dir: str,
-    runner: Callable[..., dict[str, Any]] = run_sf3d,
+    runner: Callable[..., dict[str, Any]] | None = None,
     device: str | None = None,
+    engine: str = "auto",
 ) -> dict[str, Any]:
     """Run every manifest case and record successes/failures, never fabricating output."""
     rows = load_manifest(manifest_path)
     os.makedirs(output_dir, exist_ok=True)
+    selected_engine = None if runner is not None else select_reconstruction_engine(engine)
     results: list[dict[str, Any]] = []
     started_all = time.perf_counter()
     for row in rows:
@@ -60,8 +62,19 @@ def evaluate_manifest(
             "error": None,
         }
         try:
-            model_result = runner(row["image_path"], case_output, device=device)
-            result.update({"status": "SUCCEEDED", "model_result": model_result})
+            model_result = (
+                runner(row["image_path"], case_output, device=device)
+                if runner is not None
+                else selected_engine.reconstruct(row["image_path"], case_output, device=device)
+            )
+            result.update(
+                {
+                    "status": "SUCCEEDED",
+                    "engine": model_result.get("engine") if isinstance(model_result, dict) else None,
+                    "device": model_result.get("device") if isinstance(model_result, dict) else device,
+                    "model_result": model_result,
+                }
+            )
         except Exception as exc:  # each case is isolated so one bad input cannot hide later failures
             result["error"] = f"{type(exc).__name__}: {exc}"
         result["wall_time_seconds"] = round(time.perf_counter() - started, 3)
@@ -81,7 +94,10 @@ def evaluate_manifest(
     with open(os.path.join(output_dir, "results.json"), "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2)
     with open(os.path.join(output_dir, "results.csv"), "w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["case_id", "input_type", "image_path", "status", "wall_time_seconds", "error"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["case_id", "input_type", "image_path", "status", "engine", "device", "wall_time_seconds", "error"],
+        )
         writer.writeheader()
         writer.writerows({key: row.get(key) for key in writer.fieldnames} for row in results)
     return summary
