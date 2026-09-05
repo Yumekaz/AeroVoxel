@@ -101,13 +101,18 @@ def run_depth_anything(
     ).squeeze().detach().cpu().numpy()
     inference_seconds = time.perf_counter() - inference_started
 
+    mesh_started = time.perf_counter()
     mesh = depth_map_to_mesh(depth, mask, max_size=mesh_size)
+    mesh_generation_seconds = time.perf_counter() - mesh_started
     mesh_path = os.path.join(output_dir, "mesh.glb")
+    serialization_started = time.perf_counter()
     mesh.export(mesh_path, include_normals=True)
+    glb_serialization_seconds = time.perf_counter() - serialization_started
     mesh_stats = validate_mesh(mesh)
     serialized_mesh_stats = validate_mesh_file(mesh_path)
     if not serialized_mesh_stats["valid"]:
         raise ValueError(f"Serialized reconstruction mesh failed validation: {serialized_mesh_stats}")
+    voxelization_started = time.perf_counter()
     mask_info = mesh_to_center_slice_mask(
         mesh_path,
         os.path.join(output_dir, "mask.npy"),
@@ -115,6 +120,7 @@ def run_depth_anything(
         ny=64,
         voxel_resolution_factor=1.0,
     )
+    voxelization_seconds = time.perf_counter() - voxelization_started
     np.save(os.path.join(output_dir, "depth.npy"), depth.astype(np.float32))
     depth_preview = cv2.normalize(depth, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     cv2.imwrite(os.path.join(output_dir, "depth_preview.png"), depth_preview)
@@ -128,6 +134,15 @@ def run_depth_anything(
         "model_load_seconds": round(model_load_seconds, 3),
         "model_cache_hit": cache_hit,
         "inference_seconds": round(inference_seconds, 3),
+        "timings": {
+            "model_load_seconds": round(model_load_seconds, 3),
+            "inference_seconds": round(inference_seconds, 3),
+            "mesh_generation_seconds": round(mesh_generation_seconds, 3),
+            "glb_serialization_seconds": round(glb_serialization_seconds, 3),
+            "voxelization_seconds": round(voxelization_seconds, 3),
+            "total_seconds": round(time.perf_counter() - started, 3),
+            "lbm_seconds": None,
+        },
         "peak_vram_mb": round(torch.cuda.max_memory_allocated() / (1024 * 1024), 2) if selected_device.startswith("cuda") else None,
         "mesh": mesh_stats,
         "serialized_mesh": serialized_mesh_stats,

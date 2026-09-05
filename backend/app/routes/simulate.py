@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -55,6 +56,7 @@ async def run_simulation(req: SimulateRequest):
         u_inlet = float(req.wind_speed * 0.08 / 15.0)
         u_inlet = max(0.02, min(0.15, u_inlet)) # keep LBM stable
         
+        simulation_started = time.perf_counter()
         # Instantiate and run LBM solver
         solver = LbmSolver2D(
             nx=_SIM_NX,
@@ -116,6 +118,7 @@ async def run_simulation(req: SimulateRequest):
                 "cd_force_proxy": force_m["cd_force_proxy"],
                 "cd_surface_proxy": force_m["cd_surface_proxy"],
                 "cd_force_proxy_method": force_m["cd_force_proxy_method"],
+                "lbm_seconds": round(time.perf_counter() - simulation_started, 3),
                 "confidence_label": "educational estimate (not certified CFD)",
             }
         )

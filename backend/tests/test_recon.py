@@ -6,6 +6,7 @@ import csv
 import numpy as np
 import pytest
 import trimesh
+from fastapi.testclient import TestClient
 
 from app.recon.capability import get_recon_capability
 from app.recon.integration import register_mask_for_simulation
@@ -13,6 +14,8 @@ from app.recon.export_to_aerovoxel import mesh_to_center_slice_mask
 from app.recon.evaluation import evaluate_manifest, load_manifest
 from app.recon.engine import DepthAnythingEngine, OpenCV2DFallbackEngine, select_reconstruction_engine
 import app.recon.engine as engine_module
+import app.routes.simulate as simulate_route
+from app.main import app
 from app.recon.depth_mesh import depth_map_to_mesh, validate_mesh_file
 from app.recon.sf3d_runner import run_sf3d
 from app.recon.public_dataset import prepare_pix3d_manifest
@@ -42,6 +45,25 @@ def test_register_mask_rejects_wrong_shape(tmp_path) -> None:
     np.save(source, np.ones((32, 64), dtype=bool))
     with pytest.raises(ValueError, match="must be"):
         register_mask_for_simulation(str(source), str(tmp_path / "uploads"))
+
+
+def test_registered_reconstruction_mask_runs_real_lbm_endpoint(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(simulate_route, "UPLOADS_DIR", str(tmp_path))
+    source = tmp_path / "mask.npy"
+    mask = np.zeros((64, 128), dtype=bool)
+    mask[24:40, 52:76] = True
+    np.save(source, mask)
+    job = register_mask_for_simulation(str(source), str(tmp_path))
+
+    response = TestClient(app).post(
+        "/api/simulate/simple",
+        json={"job_id": job["job_id"], "wind_speed": 15, "wind_angle_deg": 0},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["metrics"]["lbm_seconds"] >= 0
+    assert np.isfinite(payload["metrics"]["cd_force_proxy"])
 
 
 def test_mesh_export_produces_solver_shaped_center_slice(tmp_path) -> None:
