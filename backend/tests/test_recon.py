@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 
 import numpy as np
 import pytest
@@ -14,6 +15,8 @@ from app.recon.engine import DepthAnythingEngine, OpenCV2DFallbackEngine, select
 import app.recon.engine as engine_module
 from app.recon.depth_mesh import depth_map_to_mesh, validate_mesh_file
 from app.recon.sf3d_runner import run_sf3d
+from app.recon.public_dataset import prepare_pix3d_manifest
+from app.recon.depth_anything_runner import _resolve_model_source
 
 
 def test_capability_report_is_json_serializable() -> None:
@@ -112,3 +115,46 @@ def test_engine_selection_matrix_has_explicit_final_fallback(monkeypatch) -> Non
         select_reconstruction_engine("depth_anything")
     with pytest.raises(ValueError, match="preferred"):
         select_reconstruction_engine("not-an-engine")
+
+
+def test_pix3d_manifest_is_typed_and_requires_real_local_files(tmp_path) -> None:
+    dataset_root = tmp_path / "pix3d"
+    dataset_root.mkdir()
+    metadata = []
+    for index in range(5):
+        relative = f"img/object_{index}.jpg"
+        image_path = dataset_root / relative
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"fixture")
+        metadata.append({"img": relative, "truncated": False, "occluded": False})
+    (dataset_root / "pix3d.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    output = tmp_path / "pix3d_manifest.csv"
+    rows = prepare_pix3d_manifest(str(dataset_root), str(output), n_cases=5)
+
+    assert len(rows) == 5
+    assert {row["input_type"] for row in rows} == {"PUBLIC_DATASET"}
+    with output.open(newline="", encoding="utf-8") as handle:
+        written = list(csv.DictReader(handle))
+    assert len(written) == 5
+    assert all(row["input_type"] == "PUBLIC_DATASET" for row in written)
+
+
+def test_pix3d_manifest_rejects_paths_outside_dataset_root(tmp_path) -> None:
+    dataset_root = tmp_path / "pix3d"
+    dataset_root.mkdir()
+    (dataset_root / "pix3d.json").write_text(
+        json.dumps([{"img": "../outside.jpg", "truncated": False, "occluded": False}]),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="only 0 usable images"):
+        prepare_pix3d_manifest(str(dataset_root), str(tmp_path / "manifest.csv"), n_cases=1)
+
+
+def test_depth_runner_honors_explicit_local_model_directory(tmp_path, monkeypatch) -> None:
+    model_dir = tmp_path / "depth-model"
+    model_dir.mkdir()
+    monkeypatch.setenv("AEROVOXEL_RECON_MODEL_DIR", str(model_dir))
+    source, local_only = _resolve_model_source("unavailable/model")
+    assert source == str(model_dir)
+    assert local_only is True

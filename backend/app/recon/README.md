@@ -39,13 +39,14 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 The model weights are downloaded by Hugging Face on first run and are deliberately not committed. SF3D's official documentation reports about 6 GB VRAM for its default run; this laptop exposes 4 GB, so the 512 texture setting and batch size 1 are a constrained experiment, not a guarantee of fit. The CUDA requirements file deliberately installs a CUDA-enabled wheel instead of letting generic PyPI resolution select CPU-only PyTorch. The runner uses CUDA autocast FP16 and records peak allocated VRAM when CUDA is active. Set `AEROVOXEL_SF3D_REPO` if the official checkout is stored elsewhere.
 
-Latest host check (2026-09-04): Windows PnP reports the RTX 3050 as
+Latest host check (2026-09-05): Windows PnP reports the RTX 3050 as
 `OK` with `CM_PROB_NONE`, and `nvidia-smi` reports driver 616.56 and 4096 MiB
 of VRAM. The active project interpreter is still `torch 2.11.0+cpu`; installing
-the isolated CUDA wheel was attempted through pip, curl, and Windows BITS but
-the 2.6 GB download repeatedly failed with TLS/security transport errors. Do
-not describe CUDA or SF3D as validated until the CUDA wheel is installed and a
-real CUDA tensor operation succeeds.
+the isolated CUDA wheel was attempted through pip, curl, Windows BITS, and a
+Python 3.11 `uv` environment with extended retries. The 2.4–2.6 GB transfer
+repeatedly failed with TLS/security or stream/extraction errors. Do not describe
+CUDA or SF3D as validated until the CUDA wheel is installed and a real CUDA
+tensor operation succeeds.
 
 ## Run and integrate
 
@@ -88,6 +89,48 @@ non-empty `(64,128)` solver mask. The five-case wall time was 52.026 seconds
 in the first cached run; later runs are machine-load dependent. These are
 pipeline/output-validity results, not a ground-truth reconstruction-quality
 benchmark.
+
+### Public real-world evaluation data
+
+The repository does not contain five consented phone captures. For a
+scientifically honest real-world substitute, Pix3D is supported as an optional
+local dataset. Pix3D provides real object images paired with 3D shape metadata;
+it is labeled `PUBLIC_DATASET`, never `PHONE_CAPTURE`. Download the dataset
+from the [official Pix3D project](https://pix3d.csail.mit.edu/) according to
+its license, then prepare five existing, non-occluded image files:
+
+```powershell
+python scripts/prepare_pix3d_manifest.py `
+  --pix3d-root C:\datasets\pix3d `
+  --output app\recon\recon_manifest.pix3d.csv `
+  --n 5
+python scripts/evaluate_recon.py app\recon\recon_manifest.pix3d.csv `
+  --engine depth_anything --device cpu `
+  --output-dir ..\evaluation_outputs\pix3d_depth_anything
+```
+
+The preparation script only reads `pix3d.json`, verifies that each selected
+image is present under the dataset root, rejects path traversal, and writes a
+typed manifest. It does not download data or claim phone provenance. Until a
+user supplies the licensed dataset, the Pix3D run is intentionally unexecuted.
+
+### Alternative-model decision record
+
+TripoSR was reviewed as the closest single-image alternative to SF3D. Its
+official repository describes a real image-to-3D mesh pipeline and an MIT
+license, but also reports roughly 6 GB default VRAM; that does not remove the
+current 4 GB constraint, and no unsupported memory claim is made here. Hunyuan3D
+was not selected because its official 2.1 requirements are substantially above
+this laptop's VRAM and its community license is more restrictive. Point-E and
+Shap-E were not selected as the primary path because their older output/runtime
+tradeoffs would require a separate point-cloud or implicit-surface conversion
+pipeline. Depth Anything V2 Small remains the executable real-ML alternative:
+it is explicitly a monocular depth-conditioned relief reconstruction, not a
+claim of full hidden-surface recovery or an SF3D-equivalent model.
+
+Relevant upstream references: [TripoSR](https://github.com/VAST-AI-Research/TripoSR),
+[Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1),
+[Pix3D](https://github.com/xingyuansun/pix3d).
 
 ## Limits
 

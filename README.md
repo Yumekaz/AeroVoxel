@@ -148,6 +148,27 @@ python scripts/run_failure_tests.py
 python scripts/run_phone_photo_tests.py
 ```
 
+For a real-world public-data substitute when consented phone captures are not
+available, use the optional Pix3D preparation/evaluation path. Pix3D is a
+public real image/shape dataset and must remain labeled `PUBLIC_DATASET`; it
+must not be described as phone capture data:
+
+```bash
+cd backend
+python scripts/prepare_pix3d_manifest.py \
+  --pix3d-root /datasets/pix3d \
+  --output app/recon/recon_manifest.pix3d.csv \
+  --n 5
+python scripts/evaluate_recon.py app/recon/recon_manifest.pix3d.csv \
+  --engine depth_anything --device cpu \
+  --output-dir ../evaluation_outputs/pix3d_depth_anything
+```
+
+The project intentionally does not bundle the several-gigabyte dataset or
+private captures. The preparation script verifies local files and records only
+cases that actually exist. See [`backend/app/recon/README.md`](backend/app/recon/README.md)
+for the alternative-model decision record and current GPU limitations.
+
 These runs document **operating limits** (coarse grids, educational metrics, low-Re offline 3D) rather than claiming mesh-independent engineering accuracy.
 
 ---

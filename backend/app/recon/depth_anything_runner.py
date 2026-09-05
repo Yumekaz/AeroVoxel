@@ -20,6 +20,26 @@ _MODEL_CACHE: dict[tuple[str, str], tuple[Any, Any]] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 
+def _resolve_model_source(model_id: str) -> tuple[str, bool]:
+    """Prefer an explicit/local Hub snapshot before attempting network access."""
+    configured_path = os.getenv("AEROVOXEL_RECON_MODEL_DIR")
+    if configured_path and os.path.isdir(configured_path):
+        return configured_path, True
+    if os.path.isdir(model_id):
+        return model_id, True
+    try:
+        from huggingface_hub import snapshot_download
+
+        cached_path = snapshot_download(model_id, local_files_only=True)
+        if os.path.isdir(cached_path):
+            return cached_path, True
+    except Exception:
+        # A cache miss is expected on first setup; the normal Hub resolution
+        # below remains available and reports its own actionable error.
+        pass
+    return model_id, False
+
+
 def run_depth_anything(
     image_path: str,
     output_dir: str,
@@ -60,8 +80,10 @@ def run_depth_anything(
     with _MODEL_CACHE_LOCK:
         cached = _MODEL_CACHE.get(cache_key)
         if cached is None:
-            processor = AutoImageProcessor.from_pretrained(model_id)
-            model = AutoModelForDepthEstimation.from_pretrained(model_id).to(selected_device)
+            model_source, local_only = _resolve_model_source(model_id)
+            load_options = {"local_files_only": True} if local_only else {}
+            processor = AutoImageProcessor.from_pretrained(model_source, **load_options)
+            model = AutoModelForDepthEstimation.from_pretrained(model_source, **load_options).to(selected_device)
             model.eval()
             _MODEL_CACHE[cache_key] = (processor, model)
             cache_hit = False
