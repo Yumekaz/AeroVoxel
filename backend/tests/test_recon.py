@@ -20,6 +20,7 @@ from app.recon.depth_mesh import depth_map_to_mesh, validate_mesh_file
 from app.recon.sf3d_runner import run_sf3d
 from app.recon.public_dataset import prepare_pix3d_manifest
 from app.recon.depth_anything_runner import _resolve_model_source
+from app.recon.phone_capture import prepare_phone_manifest
 
 
 def test_capability_report_is_json_serializable() -> None:
@@ -180,3 +181,16 @@ def test_depth_runner_honors_explicit_local_model_directory(tmp_path, monkeypatc
     source, local_only = _resolve_model_source("unavailable/model")
     assert source == str(model_dir)
     assert local_only is True
+
+
+def test_phone_manifest_validates_and_preserves_phone_provenance(tmp_path) -> None:
+    from PIL import Image
+
+    image_path = tmp_path / "phone_capture.jpg"
+    Image.new("RGB", (32, 32), color=(120, 140, 160)).save(image_path)
+    manifest_path = tmp_path / "phone_manifest.csv"
+
+    row = prepare_phone_manifest(str(image_path), str(manifest_path))
+
+    assert row["input_type"] == "PHONE_CAPTURE"
+    assert load_manifest(str(manifest_path)) == [row]

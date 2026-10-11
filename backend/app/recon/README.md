@@ -83,6 +83,40 @@ consented captures and keep that directory gitignored. The committed synthetic
 manifest is explicitly `SYNTHETIC_EVALUATION`; it must not be reported as five
 real phone captures.
 
+### Supplying one genuine phone photograph
+
+To run one physical-phone image, transfer the original JPG/PNG/WEBP file to
+the ignored `backend/data/recon_inputs/` directory. Use a clear, well-lit image
+with one object fully visible against a simple background; do not include
+private personal data in the frame. From `backend`, run:
+
+```powershell
+python scripts/prepare_phone_manifest.py `
+  --image data\recon_inputs\phone_capture_01.jpg `
+  --output app\recon\recon_manifest.phone.csv
+python scripts/evaluate_recon.py app\recon\recon_manifest.phone.csv `
+  --engine auto --device cpu `
+  --output-dir ..\evaluation_outputs\phone_capture_01
+```
+
+The helper verifies that the file is readable and records it as
+`PHONE_CAPTURE`; it never converts the image into synthetic or public-dataset
+data. The output directory contains `results.json`, `results.csv`, and the
+validated reconstruction artifacts. For the full downstream API path, run:
+
+```powershell
+python scripts/run_recon_demo.py `
+  data\recon_inputs\phone_capture_01.jpg `
+  --engine auto --device cpu `
+  --output-dir ..\evaluation_outputs\phone_capture_01_end_to_end `
+  --register-for-api
+```
+
+Then POST the printed `job_id` to `/api/simulate/simple` with
+`{"wind_speed":15,"wind_angle_deg":0}`. This is the only remaining user action
+needed to produce a genuine phone-capture result; provenance cannot be created
+by software without the physical image.
+
 The verified local CPU run on 2026-09-04 produced 5/5 successful cases. Every
 case produced a watertight GLB with finite, non-degenerate geometry and a
 non-empty `(64,128)` solver mask. The five-case wall time was 52.026 seconds
