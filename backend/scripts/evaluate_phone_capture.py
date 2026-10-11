@@ -42,12 +42,16 @@ def evaluate_phone_cases(manifest_path: str, output_dir: str, engine_name: str, 
     engine = select_reconstruction_engine(engine_name)
     client = TestClient(app)
     results: list[dict[str, object]] = []
+    seen_hashes: dict[str, str] = {}
     started_all = time.perf_counter()
     for row in rows:
         started = time.perf_counter()
         result: dict[str, object] = {**row, "status": "FAILED", "error": None}
         try:
             result.update(_image_metadata(row["image_path"]))
+            if result["sha256"] in seen_hashes:
+                raise ValueError(f"Duplicate phone capture; same SHA-256 as {seen_hashes[result['sha256']]}")
+            seen_hashes[str(result["sha256"])] = row["case_id"]
             case_dir = os.path.join(output_dir, row["case_id"])
             reconstruction = engine.reconstruct(row["image_path"], case_dir, device=device)
             job = register_mask_for_simulation(reconstruction["mask"]["mask_path"], os.path.join(BACKEND_ROOT, "app", "assets", "uploads"))

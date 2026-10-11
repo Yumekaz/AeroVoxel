@@ -33,6 +33,7 @@ def prepare_phone_manifest(
     from PIL import Image
 
     rows: list[dict[str, str]] = []
+    seen_hashes: dict[str, str] = {}
     for raw_path, raw_case_id in zip(image_paths, case_ids):
         source = Path(raw_path).expanduser().resolve()
         case_id_value = raw_case_id.strip()
@@ -50,6 +51,9 @@ def prepare_phone_manifest(
         except Exception as exc:
             raise ValueError(f"Phone capture is not a readable image: {source}") from exc
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if digest in seen_hashes:
+            raise ValueError(f"Duplicate phone capture: {source} has the same SHA-256 as {seen_hashes[digest]}")
+        seen_hashes[digest] = str(source)
         rows.append(
             {
                 "case_id": case_id_value,

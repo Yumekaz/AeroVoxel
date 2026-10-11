@@ -196,3 +196,15 @@ def test_phone_manifest_validates_and_preserves_phone_provenance(tmp_path) -> No
     assert row[0]["sha256"]
     assert row[0]["width"] == "32"
     assert load_manifest(str(manifest_path)) == row
+
+
+def test_phone_manifest_rejects_duplicate_photos(tmp_path) -> None:
+    from PIL import Image
+
+    first = tmp_path / "phone_capture_01.jpg"
+    second = tmp_path / "phone_capture_02.jpg"
+    Image.new("RGB", (32, 32), color=(120, 140, 160)).save(first)
+    second.write_bytes(first.read_bytes())
+
+    with pytest.raises(ValueError, match="Duplicate phone capture"):
+        prepare_phone_manifest([str(first), str(second)], str(tmp_path / "manifest.csv"))

@@ -105,8 +105,9 @@ The helper verifies that the file is readable, records SHA-256 and dimensions,
 and labels it `REAL_PHONE_CAPTURE`; it never converts the image into synthetic
 or public-dataset data. The evaluator runs reconstruction and LBM for every
 listed case and writes `results.json`, `results.csv`, and validated artifacts.
-To prepare four additional photographs later, pass five image paths and five
-case IDs to the same helper; each case is evaluated independently.
+Each case must have a distinct SHA-256; duplicate copies are rejected. To
+prepare four additional photographs later, pass five distinct image paths and
+five case IDs to the same helper; each case is evaluated independently.
 
 ```powershell
 python scripts/run_recon_demo.py `
