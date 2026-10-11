@@ -75,7 +75,7 @@ python scripts/run_phone_photo_tests.py --n 5 --seed 7
 python scripts/evaluate_recon.py app/recon/recon_manifest.synthetic.csv --engine depth_anything --device cpu --output-dir ..\evaluation_outputs\depth_anything_five_case_verified
 ```
 
-The evaluator requires a typed CSV (`PHONE_CAPTURE`, `PUBLIC_DATASET`, or
+The evaluator requires a typed CSV (`REAL_PHONE_CAPTURE`, `PHONE_CAPTURE`, `PUBLIC_DATASET`, or
 `SYNTHETIC_EVALUATION`) and writes per-case JSON/CSV records. Missing inputs,
 missing dependencies, and model failures remain failures; they are never
 converted into benchmark successes. Use `backend/data/recon_inputs/` for
@@ -86,23 +86,27 @@ real phone captures.
 ### Supplying one genuine phone photograph
 
 To run one physical-phone image, transfer the original JPG/PNG/WEBP file to
-the ignored `backend/data/recon_inputs/` directory. Use a clear, well-lit image
+the ignored `backend/data/recon_inputs/` directory. If your local folder is
+named `recon_input` (singular), use that exact name in the command. Use a clear, well-lit image
 with one object fully visible against a simple background; do not include
 private personal data in the frame. From `backend`, run:
 
 ```powershell
 python scripts/prepare_phone_manifest.py `
   --image data\recon_inputs\phone_capture_01.jpg `
-  --output app\recon\recon_manifest.phone.csv
-python scripts/evaluate_recon.py app\recon\recon_manifest.phone.csv `
+  --output ..\evaluation_outputs\phone_capture_01\manifest.csv
+python scripts/evaluate_phone_capture.py `
+  ..\evaluation_outputs\phone_capture_01\manifest.csv `
   --engine auto --device cpu `
   --output-dir ..\evaluation_outputs\phone_capture_01
 ```
 
-The helper verifies that the file is readable and records it as
-`PHONE_CAPTURE`; it never converts the image into synthetic or public-dataset
-data. The output directory contains `results.json`, `results.csv`, and the
-validated reconstruction artifacts. For the full downstream API path, run:
+The helper verifies that the file is readable, records SHA-256 and dimensions,
+and labels it `REAL_PHONE_CAPTURE`; it never converts the image into synthetic
+or public-dataset data. The evaluator runs reconstruction and LBM for every
+listed case and writes `results.json`, `results.csv`, and validated artifacts.
+To prepare four additional photographs later, pass five image paths and five
+case IDs to the same helper; each case is evaluated independently.
 
 ```powershell
 python scripts/run_recon_demo.py `

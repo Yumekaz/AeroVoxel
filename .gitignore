@@ -52,6 +52,7 @@ backend/verify_mvp.py
 # Local evaluation outputs (thesis numbers / machine-specific timings)
 evaluation_outputs/
 backend/data/recon_inputs/
+backend/app/recon/recon_manifest.phone.csv
 backend/data/recon_outputs/
 backend/recon-venv/
 stable-fast-3d/

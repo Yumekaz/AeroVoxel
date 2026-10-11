@@ -192,5 +192,7 @@ def test_phone_manifest_validates_and_preserves_phone_provenance(tmp_path) -> No
 
     row = prepare_phone_manifest(str(image_path), str(manifest_path))
 
-    assert row["input_type"] == "PHONE_CAPTURE"
-    assert load_manifest(str(manifest_path)) == [row]
+    assert row[0]["input_type"] == "REAL_PHONE_CAPTURE"
+    assert row[0]["sha256"]
+    assert row[0]["width"] == "32"
+    assert load_manifest(str(manifest_path)) == row

@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from app.recon.engine import select_reconstruction_engine
 
-VALID_INPUT_TYPES = {"PHONE_CAPTURE", "PUBLIC_DATASET", "SYNTHETIC_EVALUATION"}
+VALID_INPUT_TYPES = {"PHONE_CAPTURE", "REAL_PHONE_CAPTURE", "PUBLIC_DATASET", "SYNTHETIC_EVALUATION"}
 
 
 def load_manifest(path: str) -> list[dict[str, str]]:
@@ -35,7 +35,13 @@ def load_manifest(path: str) -> list[dict[str, str]]:
         if not image_path:
             raise ValueError(f"Manifest image_path is empty for {case_id}")
         seen.add(case_id)
-        normalized.append({"case_id": case_id, "input_type": input_type, "image_path": image_path})
+        normalized_row = {
+            key: (value or "").strip()
+            for key, value in row.items()
+            if key and value is not None
+        }
+        normalized_row.update({"case_id": case_id, "input_type": input_type, "image_path": image_path})
+        normalized.append(normalized_row)
     return normalized
 
 
