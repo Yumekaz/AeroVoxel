@@ -131,27 +131,41 @@ benchmark.
 
 ### Public real-world evaluation data
 
-The repository does not contain five consented phone captures. For a
-scientifically honest real-world substitute, Pix3D is supported as an optional
-local dataset. Pix3D provides real object images paired with 3D shape metadata;
-it is labeled `PUBLIC_DATASET`, never `PHONE_CAPTURE`. Download the dataset
-from the [official Pix3D project](https://pix3d.csail.mit.edu/) according to
-its license, then prepare five existing, non-occluded image files:
+The repository does not contain five consented phone captures. Pix3D is the
+separate public real-world evaluation set; cases are labeled `PUBLIC_DATASET`,
+never `PHONE_CAPTURE`. The official Pix3D release is a 3.6 GB archive and is
+licensed CC BY 4.0. Acquire it from the
+[official Pix3D project](https://pix3d.csail.mit.edu/) and follow the dataset
+attribution terms.
+
+The manifest builder selects readable, non-truncated and non-occluded images,
+preferring category diversity. It records stable source record indices,
+category, image source, dimensions, image SHA-256, and local paths to available
+Pix3D masks, models and voxel annotations. The dedicated evaluator verifies
+the checksum, runs reconstruction, validates the serialized mesh, generates
+the solver mask, calls the existing simulation API/LBM endpoint, and copies
+the resulting mask, velocity and pressure arrays into each case output:
 
 ```powershell
-python scripts/prepare_pix3d_manifest.py `
-  --pix3d-root C:\datasets\pix3d `
-  --output app\recon\recon_manifest.pix3d.csv `
-  --n 5
-python scripts/evaluate_recon.py app\recon\recon_manifest.pix3d.csv `
-  --engine depth_anything --device cpu `
-  --output-dir ..\evaluation_outputs\pix3d_depth_anything
+cd backend
+python scripts/prepare_pix3d_manifest.py --pix3d-root data\pix3d_public_subset --output ..\evaluation_outputs\pix3d_public_subset\manifest.csv --n 5
+python scripts/evaluate_public_dataset.py ..\evaluation_outputs\pix3d_public_subset\manifest.csv --engine auto --device cpu --output-dir ..\evaluation_outputs\pix3d_public_evaluation
 ```
 
-The preparation script only reads `pix3d.json`, verifies that each selected
-image is present under the dataset root, rejects path traversal, and writes a
-typed manifest. It does not download data or claim phone provenance. Until a
-user supplies the licensed dataset, the Pix3D run is intentionally unexecuted.
+The result bundle includes `results.json`, `results.csv`, validated GLBs,
+depth/mask artifacts, and per-case LBM arrays and metrics. Failures are isolated
+per sample. No 3D ground-truth score is computed: the current Depth Anything
+V2 output is a view-conditioned depth relief, not a canonical reconstruction
+aligned to Pix3D voxel/model coordinates. No 3D IoU/CD/EMD score is claimed
+without valid coordinate alignment.
+
+Verified local run: five cases across bed, bookcase, chair, desk, and misc;
+all five produced valid GLBs, solver masks, and completed LBM simulations on
+CPU with Depth Anything V2 Small. These are pipeline/output-validity results,
+not reconstruction-quality benchmark scores. Machine-specific timings and
+metrics are in the ignored local
+`evaluation_outputs/pix3d_public_evaluation/results.json`. The downloaded
+subset and generated outputs are not committed.
 
 ### Alternative-model decision record
 

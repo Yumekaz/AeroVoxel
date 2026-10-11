@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import csv
+import os
 
 import numpy as np
 import pytest
 import trimesh
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.recon.capability import get_recon_capability
 from app.recon.integration import register_mask_for_simulation
@@ -19,6 +21,7 @@ from app.main import app
 from app.recon.depth_mesh import depth_map_to_mesh, validate_mesh_file
 from app.recon.sf3d_runner import run_sf3d
 from app.recon.public_dataset import prepare_pix3d_manifest
+import app.recon.public_evaluation as public_evaluation_module
 from app.recon.depth_anything_runner import _resolve_model_source
 from app.recon.phone_capture import prepare_phone_manifest
 
@@ -148,8 +151,19 @@ def test_pix3d_manifest_is_typed_and_requires_real_local_files(tmp_path) -> None
         relative = f"img/object_{index}.jpg"
         image_path = dataset_root / relative
         image_path.parent.mkdir(parents=True, exist_ok=True)
-        image_path.write_bytes(b"fixture")
-        metadata.append({"img": relative, "truncated": False, "occluded": False})
+        Image.new("RGB", (32 + index, 24), color=(120, 140, 160)).save(image_path)
+        metadata.append(
+            {
+                "img": relative,
+                "category": f"category_{index}",
+                "img_source": "internet",
+                "mask": f"mask/object_{index}.png",
+                "model": f"model/object_{index}/model.obj",
+                "voxel": f"model/object_{index}/voxel.mat",
+                "truncated": False,
+                "occluded": False,
+            }
+        )
     (dataset_root / "pix3d.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     output = tmp_path / "pix3d_manifest.csv"
@@ -157,10 +171,15 @@ def test_pix3d_manifest_is_typed_and_requires_real_local_files(tmp_path) -> None
 
     assert len(rows) == 5
     assert {row["input_type"] for row in rows} == {"PUBLIC_DATASET"}
+    assert {row["dataset"] for row in rows} == {"Pix3D"}
+    assert {row["category"] for row in rows} == {f"category_{index}" for index in range(5)}
+    assert all(len(row["image_sha256"]) == 64 for row in rows)
+    assert all(row["image_width"] for row in rows)
     with output.open(newline="", encoding="utf-8") as handle:
         written = list(csv.DictReader(handle))
     assert len(written) == 5
     assert all(row["input_type"] == "PUBLIC_DATASET" for row in written)
+    assert all(row["dataset_split"] == "official_release_unsplit" for row in written)
 
 
 def test_pix3d_manifest_rejects_paths_outside_dataset_root(tmp_path) -> None:
@@ -172,6 +191,123 @@ def test_pix3d_manifest_rejects_paths_outside_dataset_root(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="only 0 usable images"):
         prepare_pix3d_manifest(str(dataset_root), str(tmp_path / "manifest.csv"), n_cases=1)
+
+
+def test_pix3d_manifest_skips_corrupt_image_and_records_optional_gt(tmp_path) -> None:
+    root = tmp_path / "pix3d"
+    (root / "img").mkdir(parents=True)
+    (root / "model" / "chair").mkdir(parents=True)
+    Image.new("RGB", (40, 30), color="white").save(root / "img" / "valid.png")
+    (root / "img" / "corrupt.png").write_bytes(b"not an image")
+    (root / "model" / "chair" / "voxel.mat").write_bytes(b"fixture")
+    (root / "pix3d.json").write_text(
+        json.dumps(
+            [
+                {"img": "img/corrupt.png", "category": "chair", "truncated": False, "occluded": False},
+                {
+                    "img": "img/valid.png",
+                    "category": "chair",
+                    "voxel": "model/chair/voxel.mat",
+                    "truncated": False,
+                    "occluded": False,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rows = prepare_pix3d_manifest(str(root), str(tmp_path / "manifest.csv"), n_cases=1)
+
+    assert rows[0]["image_path"].endswith("valid.png")
+    assert rows[0]["ground_truth_voxel_path"].endswith("voxel.mat")
+    assert rows[0]["image_width"] == "40"
+    assert len(rows[0]["image_sha256"]) == 64
+
+
+def test_public_dataset_evaluator_runs_lbm_and_persists_case_outputs(tmp_path, monkeypatch) -> None:
+    from app.recon.depth_mesh import validate_mesh_file
+    from app.recon.export_to_aerovoxel import mesh_to_center_slice_mask
+
+    root = tmp_path / "pix3d"
+    (root / "img").mkdir(parents=True)
+    image_path = root / "img" / "input.png"
+    Image.new("RGB", (80, 60), color=(200, 200, 200)).save(image_path)
+    (root / "pix3d.json").write_text(
+        json.dumps([{"img": "img/input.png", "category": "chair", "truncated": False, "occluded": False}]),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.csv"
+    prepare_pix3d_manifest(str(root), str(manifest), n_cases=1)
+
+    class TestEngine:
+        name = "test-engine"
+        selection_reason = "test-only geometry adapter"
+
+        def reconstruct(self, input_path, output_dir, device=None):
+            os.makedirs(output_dir, exist_ok=True)
+            mesh_path = os.path.join(output_dir, "mesh.glb")
+            trimesh.creation.box().export(mesh_path)
+            stats = validate_mesh_file(mesh_path)
+            mask_path = os.path.join(output_dir, "mask.npy")
+            mask_info = mesh_to_center_slice_mask(mesh_path, mask_path)
+            return {
+                "engine": self.name,
+                "device": "cpu",
+                "mesh_path": mesh_path,
+                "serialized_mesh": stats,
+                "mask": mask_info,
+            }
+
+    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name: TestEngine())
+    monkeypatch.setattr(simulate_route, "UPLOADS_DIR", str(tmp_path / "uploads"))
+    out_dir = tmp_path / "public-eval"
+
+    summary = public_evaluation_module.evaluate_public_dataset(
+        str(manifest), str(out_dir), engine_name="auto", device="cpu"
+    )
+
+    assert summary["n_succeeded"] == 1, summary["results"][0].get("error")
+    assert summary["n_lbm_completed"] == 1
+    assert summary["success_rate"] == 1.0
+    case = summary["results"][0]
+    assert case["input_type"] == "PUBLIC_DATASET"
+    assert case["geometry_valid"] is True
+    assert case["simulation_artifacts"]["velocity"]["all_finite"] is True
+    assert os.path.isfile(case["simulation_artifacts"]["pressure"]["path"])
+    assert (out_dir / "results.json").is_file()
+    assert (out_dir / "results.csv").is_file()
+
+
+def test_public_dataset_evaluator_records_checksum_mismatch_without_inference(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "pix3d"
+    (root / "img").mkdir(parents=True)
+    image_path = root / "img" / "input.png"
+    Image.new("RGB", (80, 60), color=(200, 200, 200)).save(image_path)
+    (root / "pix3d.json").write_text(
+        json.dumps([{"img": "img/input.png", "category": "chair", "truncated": False, "occluded": False}]),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.csv"
+    prepare_pix3d_manifest(str(root), str(manifest), n_cases=1)
+    Image.new("RGB", (81, 60), color=(20, 30, 40)).save(image_path)
+
+    class MustNotRunEngine:
+        name = "must-not-run"
+        selection_reason = "checksum mismatch should stop before inference"
+
+        def reconstruct(self, *_args, **_kwargs):
+            raise AssertionError("inference must not run on a checksum-mismatched sample")
+
+    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name: MustNotRunEngine())
+    summary = public_evaluation_module.evaluate_public_dataset(
+        str(manifest), str(tmp_path / "mismatch-output"), engine_name="auto", device="cpu"
+    )
+
+    assert summary["n_failed"] == 1
+    assert summary["n_succeeded"] == 0
+    assert "checksum differs" in summary["results"][0]["error"]
+    persisted = json.loads((tmp_path / "mismatch-output" / "results.json").read_text(encoding="utf-8"))
+    assert persisted["results"][0]["status"] == "FAILED"
 
 
 def test_depth_runner_honors_explicit_local_model_directory(tmp_path, monkeypatch) -> None:
