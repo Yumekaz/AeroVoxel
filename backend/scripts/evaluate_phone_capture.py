@@ -39,7 +39,7 @@ def evaluate_phone_cases(manifest_path: str, output_dir: str, engine_name: str, 
     if any(row["input_type"] != "REAL_PHONE_CAPTURE" for row in rows):
         raise ValueError("Phone evaluation requires input_type=REAL_PHONE_CAPTURE")
     os.makedirs(output_dir, exist_ok=True)
-    engine = select_reconstruction_engine(engine_name)
+    engine = select_reconstruction_engine(engine_name, device=device)
     client = TestClient(app)
     results: list[dict[str, object]] = []
     seen_hashes: dict[str, str] = {}
@@ -48,7 +48,10 @@ def evaluate_phone_cases(manifest_path: str, output_dir: str, engine_name: str, 
         started = time.perf_counter()
         result: dict[str, object] = {**row, "status": "FAILED", "error": None}
         try:
-            result.update(_image_metadata(row["image_path"]))
+            image_metadata = _image_metadata(row["image_path"])
+            if row.get("sha256") and image_metadata["sha256"] != row["sha256"]:
+                raise ValueError("Phone image checksum differs from its prepared manifest")
+            result.update(image_metadata)
             if result["sha256"] in seen_hashes:
                 raise ValueError(f"Duplicate phone capture; same SHA-256 as {seen_hashes[result['sha256']]}")
             seen_hashes[str(result["sha256"])] = row["case_id"]

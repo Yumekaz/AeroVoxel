@@ -10,6 +10,7 @@ from contextlib import nullcontext
 from typing import Any
 
 from app.recon.export_to_aerovoxel import mesh_to_center_slice_mask
+from app.recon.depth_mesh import validate_mesh_file
 
 
 MODEL_ID = "stabilityai/stable-fast-3d"
@@ -73,7 +74,11 @@ def run_sf3d(
     # SF3D's official runner uses rembg here. An existing alpha channel is
     # respected; opaque images remain valid inputs but get a clear warning.
     if image.getchannel("A").getextrema() == (255, 255):
-        print("[recon] Input has no alpha channel; install rembg for background removal.")
+        try:
+            from rembg import remove
+            image = remove(image)
+        except ImportError as exc:
+            raise RuntimeError("Opaque SF3D input requires rembg background removal") from exc
     image = resize_foreground(image, foreground_ratio)
 
     model = SF3D.from_pretrained(
@@ -98,8 +103,13 @@ def run_sf3d(
 
     mesh_path = os.path.join(output_dir, "mesh.glb")
     mesh.export(mesh_path, include_normals=True)
+    serialized_mesh = validate_mesh_file(mesh_path)
+    if not serialized_mesh["valid"]:
+        raise ValueError(f"SF3D serialized mesh failed validation: {serialized_mesh}")
     mask_info = mesh_to_center_slice_mask(mesh_path, os.path.join(output_dir, "mask.npy"))
     result: dict[str, Any] = {
+        "engine": "stable-fast-3d",
+        "serialized_mesh": serialized_mesh,
         "model": model_id,
         "device": selected_device,
         "cuda_available": bool(torch.cuda.is_available()),

@@ -1,6 +1,17 @@
-import React, { useEffect, useRef } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import {
+  createDemoModel,
+  isDemoModel,
+  cellSize,
+  domainHeight,
+  loadDetailedCar,
+  hasDetailedCar,
+  maskBounds,
+} from "./demoModels";
+import type { MaskGrid } from "./demoModels";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 export interface FlowData {
   velocity: Float32Array;
@@ -9,8 +20,7 @@ export interface FlowData {
   nx: number;
   ny: number;
 }
-
-interface WindTunnelViewerProps {
+interface Props {
   caseId: string;
   windSpeed: number;
   windAngle: number;
@@ -18,844 +28,786 @@ interface WindTunnelViewerProps {
   showPressure: boolean;
   showWake: boolean;
   flowData: FlowData | null;
-  // Phase 5 features
+  previewMask?: Pick<FlowData, "mask" | "nx" | "ny"> | null;
   showVoxels: boolean;
   showSlicePlane: boolean;
-  slicePosition: number; // -2.0 to 2.0 (representing Y floor-to-ceiling)
+  slicePosition: number;
+  paused?: boolean;
+  cameraView?: "side" | "perspective";
+  resetCamera?: number;
   onFpsUpdate?: (fps: number) => void;
 }
 
-export const WindTunnelViewer: React.FC<WindTunnelViewerProps> = ({
-  caseId,
-  windSpeed,
-  windAngle,
-  showStreamlines,
-  showPressure,
-  showWake,
-  flowData,
-  showVoxels,
-  showSlicePlane,
-  slicePosition,
-  onFpsUpdate,
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const requestRef = useRef<number | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  
-  // Active obstacle mesh
-  const obstacleRef = useRef<THREE.Group | null>(null);
-  
-  // Slice plane & Arrows
-  const slicePlaneMeshRef = useRef<THREE.Mesh | null>(null);
-  const arrowsGroupRef = useRef<THREE.Group | null>(null);
-  
-  // Particle system state
-  const particleCount = 1200;
-  const particlesRef = useRef<{
-    pos: THREE.Vector3;
-    age: number;
-    life: number;
-    baseY: number;
-    baseZ: number;
-  }[]>([]);
-  const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
-  const pointsRef = useRef<THREE.Points | null>(null);
+// Flow paths share the exact XY coordinate mapping with the solver mask.
+const fieldPoint = (x: number, y: number, flow: FlowData) => {
+  const fx = THREE.MathUtils.clamp(
+    ((x + 8) / 16) * (flow.nx - 1),
+    0,
+    flow.nx - 1,
+  );
+  const fy = THREE.MathUtils.clamp(
+    (flow.ny - 1) / 2 - y / cellSize(flow),
+    0,
+    flow.ny - 1,
+  );
+  const nearest = Math.round(fy) * flow.nx + Math.round(fx);
+  if (flow.mask[nearest]) return { solid: true, vx: 0, vy: 0, p: 0 };
+  const x0 = Math.floor(fx),
+    y0 = Math.floor(fy),
+    tx = fx - x0,
+    ty = fy - y0;
+  let vx = 0,
+    vy = 0,
+    pressure = 0,
+    weight = 0;
+  // Interpolate fluid neighbours only; solid velocities must not smear into air.
+  for (let dy = 0; dy <= 1; dy++)
+    for (let dx = 0; dx <= 1; dx++) {
+      const i =
+        Math.min(y0 + dy, flow.ny - 1) * flow.nx +
+        Math.min(x0 + dx, flow.nx - 1);
+      const w = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty);
+      if (flow.mask[i]) continue;
+      vx += flow.velocity[i] * w;
+      vy -= flow.velocity[flow.nx * flow.ny + i] * w;
+      pressure += flow.pressure[i] * w;
+      weight += w;
+    }
+  return {
+    solid: weight < 1e-6,
+    vx: vx / Math.max(weight, 1e-6),
+    vy: vy / Math.max(weight, 1e-6),
+    p: pressure / Math.max(weight, 1e-6),
+  };
+};
+const pressureColor = (p: number, span: number) => {
+  const t = THREE.MathUtils.clamp(p / span, -1, 1);
+  return new THREE.Color(0x32d8ee).lerp(
+    new THREE.Color(t > 0 ? 0xff765c : 0x4486ff),
+    Math.abs(t),
+  );
+};
 
-  // Initialize scene, camera, lights, orbit controls
+export function WindTunnelViewer(props: Props) {
+  const container = useRef<HTMLDivElement>(null);
+  const latest = useRef(props);
+  const [renderError, setRenderError] = useState(false);
+  const [carReady, setCarReady] = useState(hasDetailedCar);
+  const [assetError, setAssetError] = useState(false);
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (!props.caseId.includes("car")) return;
+    let active = true;
+    loadDetailedCar()
+      .then(() => {
+        if (active) setCarReady(true);
+      })
+      .catch(() => {
+        if (active) setAssetError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.caseId]);
+  const cameraControl = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    latest.current = props;
+  });
+  useEffect(() => {
+    cameraControl.current?.();
+  }, [props.cameraView, props.resetCamera]);
 
-    // React StrictMode can remount effects during development. Clear any stale
-    // renderer canvas before attaching the active WebGL surface.
-    container.replaceChildren();
-
-    const width = Math.max(1, container.clientWidth);
-    const height = Math.max(1, container.clientHeight);
-
-    // 1. Scene
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x020205);
-    scene.fog = new THREE.FogExp2(0x020205, 0.05);
-    sceneRef.current = scene;
-
-    // 2. Camera
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    camera.position.set(11, 5, 11);
-    cameraRef.current = camera;
-
-    // 3. Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  useEffect(() => {
+    const host = container.current;
+    if (!host) return;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch {
+      queueMicrotask(() => setRenderError(true));
+      return;
+    }
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setClearColor(0x091522);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.9;
     renderer.shadowMap.enabled = true;
-    container.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
-
-    // 4. Controls
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Geometry and lighting are static between object/overlay changes.
+    renderer.shadowMap.autoUpdate = false;
+    host.replaceChildren(renderer.domElement);
+    const scene = new THREE.Scene();
+    const environment = new RoomEnvironment();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const environmentTarget = pmrem.fromScene(environment, 0.04);
+    scene.environment = environmentTarget.texture;
+    environment.dispose();
+    pmrem.dispose();
+    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxPolarAngle = Math.PI / 2 + 0.1;
-    controls.minDistance = 3;
-    controls.maxDistance = 30;
-
-    // 5. Lights
-    const ambientLight = new THREE.AmbientLight(0x111122);
-    scene.add(ambientLight);
-
-    const dirLight1 = new THREE.DirectionalLight(0x00f2fe, 1.5);
-    dirLight1.position.set(5, 10, 7);
-    dirLight1.castShadow = true;
-    scene.add(dirLight1);
-
-    const dirLight2 = new THREE.DirectionalLight(0x7c3aed, 1.0);
-    dirLight2.position.set(-5, 5, -7);
-    scene.add(dirLight2);
-
-    // 6. Tunnel Cage / Floor grid
-    const gridHelper = new THREE.GridHelper(24, 24, 0x00f2fe, 0x1e293b);
-    gridHelper.position.y = -2;
-    if (Array.isArray(gridHelper.material)) {
-      gridHelper.material.forEach((mat) => {
-        mat.transparent = true;
-        mat.opacity = 0.2;
-      });
-    } else {
-      gridHelper.material.transparent = true;
-      gridHelper.material.opacity = 0.2;
-    }
-    scene.add(gridHelper);
-
-    // Bounding Box representing the wind tunnel boundaries
-    const boxGeom = new THREE.BoxGeometry(16, 4, 6);
-    const edges = new THREE.EdgesGeometry(boxGeom);
-    const boxMat = new THREE.LineBasicMaterial({ 
-      color: 0x334155, 
-      transparent: true, 
-      opacity: 0.3 
-    });
-    const tunnelWireframe = new THREE.LineSegments(edges, boxMat);
-    tunnelWireframe.position.set(0, 0, 0);
-    scene.add(tunnelWireframe);
-
-    // Create Slice Plane mesh (Phase 5)
-    const planeGeom = new THREE.PlaneGeometry(16, 6);
-    planeGeom.rotateX(-Math.PI / 2);
-    const planeMat = new THREE.MeshBasicMaterial({
-      color: 0x00f2fe,
-      transparent: true,
-      opacity: 0.08,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
-    const slicePlaneMesh = new THREE.Mesh(planeGeom, planeMat);
-    scene.add(slicePlaneMesh);
-    slicePlaneMeshRef.current = slicePlaneMesh;
-
-    // Create Slice Arrows Group (Phase 5)
-    const arrowsGroup = new THREE.Group();
-    scene.add(arrowsGroup);
-    arrowsGroupRef.current = arrowsGroup;
-
-    // Generate Arrow grid on the plane
-    // 13 columns along X (from -6 to +6), 5 rows along Z (from -2 to +2)
-    const arrowDir = new THREE.Vector3(1, 0, 0);
-    for (let xVal = -6; xVal <= 6; xVal += 1.0) {
-      for (let zVal = -2; zVal <= 2; zVal += 1.0) {
-        const arrow = new THREE.ArrowHelper(
-          arrowDir, 
-          new THREE.Vector3(xVal, 0, zVal), 
-          0.6, 
-          0x00f2fe, 
-          0.15, 
-          0.1
-        );
-        arrowsGroup.add(arrow);
+    controls.minDistance = 5;
+    controls.maxDistance = 28;
+    const focus = new THREE.Vector3();
+    const fitSize = new THREE.Vector3(4.8, 2, 2);
+    let framedCase = "";
+    let framedGrid: MaskGrid | null | undefined;
+    const placeCamera = () => {
+      const side = latest.current.cameraView !== "perspective";
+      const tangent = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const distance = Math.max(
+        5,
+        (fitSize.y * 0.9) / tangent,
+        (fitSize.x * 1.6 + fitSize.z * 0.35) / (2 * tangent * camera.aspect),
+      );
+      camera.position.set(
+        focus.x + (side ? 0 : -distance * 0.7),
+        focus.y + (side ? 0 : distance * 0.32),
+        side ? distance : distance * 0.85,
+      );
+      controls.target.copy(focus);
+      controls.update();
+    };
+    cameraControl.current = placeCamera;
+    placeCamera();
+    scene.add(new THREE.HemisphereLight(0xdceaff, 0x1a2830, 0.7));
+    const key = new THREE.DirectionalLight(0xfff3df, 1.7);
+    key.position.set(-3, 6, 8);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.left = -12;
+    key.shadow.camera.right = 12;
+    key.shadow.camera.top = 12;
+    key.shadow.camera.bottom = -12;
+    key.shadow.camera.far = 40;
+    key.shadow.bias = -0.0002;
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x88aacd, 0.8);
+    rim.position.set(4, 3, -5);
+    scene.add(rim);
+    const grid = new THREE.GridHelper(24, 24, 0x37576d, 0x1a3041);
+    grid.position.y = -2.08;
+    (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(
+      (m) => {
+        m.transparent = true;
+        m.opacity = 0.22;
+        m.depthWrite = false;
+      },
+    );
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.MeshBasicMaterial({ color: 0x091522, toneMapped: false }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.ShadowMaterial({
+        opacity: 0.24,
+        color: 0x000000,
+        depthWrite: false,
+      }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.receiveShadow = true;
+    scene.add(shadow);
+    const tunnel = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(16, 4, 4)),
+      new THREE.LineBasicMaterial({
+        color: 0x29475b,
+        transparent: true,
+        opacity: 0.14,
+      }),
+    );
+    scene.add(tunnel);
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(16, 4),
+      new THREE.MeshBasicMaterial({
+        color: 0x33d7ed,
+        opacity: 0.08,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    plane.rotation.x = -Math.PI / 2;
+    scene.add(plane);
+    const object = new THREE.Group();
+    scene.add(object);
+    const trails = new THREE.Group();
+    scene.add(trails);
+    let previousKey = "";
+    let detailedLoaded = hasDetailedCar();
+    const tracerCount = 600,
+      historyLength = 30;
+    type Tracer = {
+      x: number;
+      y: number;
+      z: number;
+      age: number;
+      life: number;
+      history: Float32Array;
+    };
+    let tracers: Tracer[] = [];
+    let smoke: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null =
+      null;
+    let pressureSpan = 0.02,
+      previewA = 2.8,
+      previewB = 0.8,
+      domainHalf = 4;
+    let lastTraceCase = "";
+    let lastTraceFlow: FlowData | null = null;
+    let lastTraceMask: Props["previewMask"] = null;
+    const viewDirection = new THREE.Vector3();
+    let seedMin = -2,
+      seedMax = 2;
+    const sample = (x: number, y: number) => {
+      const p = latest.current;
+      if (p.flowData) {
+        const v = fieldPoint(x, y, p.flowData);
+        return { ...v, vx: v.vx / 0.08, vy: v.vy / 0.08 };
       }
-    }
-
-    // 7. Initialize particle data
-    const particles = [];
-    for (let i = 0; i < particleCount; i++) {
-      particles.push({
-        pos: new THREE.Vector3(
-          (Math.random() - 0.5) * 16,
-          (Math.random() - 0.5) * 3.8,
-          (Math.random() - 0.5) * 5.8
-        ),
-        age: Math.random() * 100,
-        life: 100 + Math.random() * 50,
-        baseY: 0,
-        baseZ: 0
-      });
-      particles[i].baseY = particles[i].pos.y;
-      particles[i].baseZ = particles[i].pos.z;
-    }
-    particlesRef.current = particles;
-
-    // Create Particle geometry
-    const pointsGeom = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-    pointsGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    pointsGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    pointsGeometryRef.current = pointsGeom;
-
-    const particleMat = new THREE.PointsMaterial({
-      size: 0.08,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-
-    const points = new THREE.Points(pointsGeom, particleMat);
-    scene.add(points);
-    pointsRef.current = points;
-
-    // Handle resizing dynamically using ResizeObserver (fixes 0px width/height layout initialization)
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width === 0 || height === 0) continue;
-        
-        if (cameraRef.current && rendererRef.current) {
-          cameraRef.current.aspect = width / height;
-          cameraRef.current.updateProjectionMatrix();
-          rendererRef.current.setSize(width, height);
+      // Elliptic potential-flow preview. Computed fields get no artificial noise.
+      const xx = x / previewA,
+        yy = y / previewB,
+        r2 = xx * xx + yy * yy;
+      if (r2 < 1.05) return { solid: true, vx: 0, vy: 0, p: 0 };
+      const inverse = 1 / Math.max(r2 * r2, 1e-6);
+      const vx = 1 - (xx * xx - yy * yy) * inverse;
+      let vy = (-2 * xx * yy * inverse * previewB) / previewA;
+      if (p.showWake && x > previewA) {
+        const envelope =
+          Math.exp(-(x - previewA) / 3) * Math.exp((-y * y) / 0.7);
+        vy += Math.sin(clock * 2.2 - (x - previewA) * 2.5) * 0.14 * envelope;
+      }
+      return { solid: false, vx, vy, p: 0.018 * (1 - vx * vx - vy * vy) };
+    };
+    const respawn = (tracer: Tracer, fillDomain: boolean) => {
+      for (let attempt = 0; attempt < 24; attempt++) {
+        tracer.x = fillDomain
+          ? -7.85 + Math.random() * 15.6
+          : -7.85 + Math.random() * 0.15;
+        // A smoke rake puts more visualization markers in the interaction band.
+        // Seeding changes visibility only; velocity integration remains field-driven.
+        tracer.y =
+          Math.random() < 0.72
+            ? seedMin + Math.random() * (seedMax - seedMin)
+            : -domainHalf * 0.95 + Math.random() * domainHalf * 1.9;
+        if (!sample(tracer.x, tracer.y).solid) break;
+      }
+      tracer.z = (Math.random() - 0.5) * 2.6;
+      tracer.age = fillDomain ? 0.5 : 0;
+      tracer.life = 7 + Math.random() * 6;
+      let tailX = tracer.x,
+        tailY = tracer.y;
+      for (let h = 0; h < historyLength; h++) {
+        tracer.history[h * 3] = tailX;
+        tracer.history[h * 3 + 1] = tailY;
+        tracer.history[h * 3 + 2] = tracer.z;
+        if (fillDomain) {
+          const v = sample(tailX, tailY);
+          const x = tailX - v.vx * 0.035,
+            y = tailY - v.vy * 0.035;
+          if (
+            x > -8 &&
+            Math.abs(y) < domainHalf * 0.99 &&
+            !sample(x, y).solid
+          ) {
+            tailX = x;
+            tailY = y;
+          }
         }
       }
-    });
-
-    resizeObserver.observe(container);
-
-    // Clean up
-    return () => {
-      resizeObserver.disconnect();
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      controls.dispose();
-      renderer.dispose();
-      if (renderer.domElement.parentNode === container) {
-        container.removeChild(renderer.domElement);
+    };
+    const release = (group: THREE.Group) => {
+      group.traverse((child) => {
+        if (
+          child instanceof THREE.Mesh ||
+          child instanceof THREE.Line ||
+          child instanceof THREE.Points
+        ) {
+          if (!child.userData.sharedGeometry) child.geometry.dispose();
+          const materials = Array.isArray(child.material)
+            ? child.material
+            : [child.material];
+          materials.forEach((m) => m.dispose());
+        }
+      });
+      group.clear();
+    };
+    const rebuild = () => {
+      release(object);
+      release(trails);
+      const p = latest.current;
+      const silver = new THREE.MeshStandardMaterial({
+        color: 0xd5e5ec,
+        metalness: 0.25,
+        roughness: 0.38,
+        wireframe: p.showVoxels,
+      });
+      const field = p.flowData ?? p.previewMask;
+      domainHalf = domainHeight(field) / 2;
+      grid.position.y = -domainHalf - 0.02;
+      floor.position.y = -domainHalf - 0.06;
+      shadow.position.y = -domainHalf - 0.04;
+      tunnel.geometry.dispose();
+      tunnel.geometry = new THREE.EdgesGeometry(
+        new THREE.BoxGeometry(16, domainHalf * 2, 4),
+      );
+      if (isDemoModel(p.caseId) && !p.showVoxels && !p.previewMask) {
+        silver.dispose();
+        object.add(createDemoModel(p.caseId, p.flowData));
+      } else if (field) {
+        const step = cellSize(field);
+        const count = Array.from(field.mask).reduce(
+          (n, value) => n + (value > 0 ? 1 : 0),
+          0,
+        );
+        const geometry = new THREE.BoxGeometry(step, step, 0.65);
+        const cells = new THREE.InstancedMesh(geometry, silver, count);
+        const matrix = new THREE.Matrix4();
+        let index = 0;
+        for (let y = 0; y < field.ny; y++)
+          for (let x = 0; x < field.nx; x++) {
+            if (!field.mask[y * field.nx + x]) continue;
+            matrix.makeTranslation(x * step - 8, domainHalf - y * step, 0);
+            cells.setMatrixAt(index++, matrix);
+          }
+        object.add(cells);
+      } else {
+        // Unknown/custom geometry has no inferred vehicle classification.
+        object.add(
+          new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.8, 0.65), silver),
+        );
       }
-      rendererRef.current = null;
-      cameraRef.current = null;
-      sceneRef.current = null;
+      object.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      const flow = p.flowData;
+      pressureSpan = 0.02;
+      const bounds = new THREE.Box3().setFromObject(object);
+      const interaction = field ? maskBounds(field) : bounds;
+      seedMin = Math.max(-domainHalf * 0.95, interaction.min.y - 0.7);
+      seedMax = Math.min(domainHalf * 0.95, interaction.max.y + 0.7);
+      if (framedCase !== p.caseId || framedGrid !== field) {
+        bounds.getCenter(focus);
+        bounds.getSize(fitSize);
+        focus.x += fitSize.x * 0.15;
+        framedCase = p.caseId;
+        framedGrid = field;
+        placeCamera();
+      }
+      const depth = Math.max(4, bounds.max.z - bounds.min.z + 2);
+      tunnel.geometry.dispose();
+      tunnel.geometry = new THREE.EdgesGeometry(
+        new THREE.BoxGeometry(16, domainHalf * 2, depth),
+      );
+      plane.geometry.dispose();
+      plane.geometry = new THREE.PlaneGeometry(16, depth);
+      previewA =
+        Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x)) + 0.08;
+      previewB =
+        Math.max(Math.abs(bounds.min.y), Math.abs(bounds.max.y)) + 0.08;
+      if (flow) {
+        const magnitudes = Array.from(flow.pressure)
+          .filter((_, i) => !flow.mask[i])
+          .map(Math.abs)
+          .sort((a, b) => a - b);
+        pressureSpan = Math.max(
+          magnitudes[Math.floor(magnitudes.length * 0.95)] ?? 0.02,
+          1e-5,
+        );
+      }
+      const positions: number[] = [];
+      const colors: number[] = [];
+      for (let seed = 0; seed < (p.previewMask ? 0 : 26); seed++) {
+        const y0 = -domainHalf * 0.94 + (seed / 25) * domainHalf * 1.88;
+        for (const z of [-0.65, 0.65]) {
+          const path: THREE.Vector3[] = [];
+          let x = -7.9,
+            y = y0;
+          for (let step = 0; step < 340; step++) {
+            if (x > 7.95 || x < -8 || Math.abs(y) > domainHalf * 0.995) break;
+            let pressure: number;
+            if (flow) {
+              const v = fieldPoint(x, y, flow);
+              if (v.solid || !Number.isFinite(v.vx + v.vy + v.p)) break;
+              path.push(new THREE.Vector3(x, y, z));
+              pressure = v.p;
+              const magnitude = Math.hypot(v.vx, v.vy);
+              if (magnitude < 1e-5) break;
+              x += (v.vx / magnitude) * 0.055;
+              y += (v.vy / magnitude) * 0.055;
+            } else {
+              // Illustrative potential-flow-like preview, never a simulation result.
+              const sign = y0 < 0 ? -1 : 1;
+              const spread = p.caseId.includes("airfoil") ? 0.8 : 1.35;
+              const bend =
+                sign *
+                spread *
+                Math.exp((-x * x) / 5.4) *
+                Math.exp(-Math.abs(y0) / 1.4);
+              y = y0 + bend;
+              if (p.showWake && x > 1.8)
+                y +=
+                  Math.sin(x * 3 + seed * 0.12) *
+                  0.06 *
+                  Math.exp(-(x - 1.8) / 3);
+              path.push(new THREE.Vector3(x, y, z));
+              pressure =
+                0.018 *
+                (Math.exp(-((x + 1.6) ** 2) / 0.7) - Math.exp((-x * x) / 3)) *
+                Math.exp(-Math.abs(y0));
+              x += 0.055;
+            }
+            if (path.length > 1) {
+              const a = path[path.length - 2],
+                b = path[path.length - 1];
+              positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+              const c = p.showPressure
+                ? pressureColor(pressure, pressureSpan)
+                : new THREE.Color(0x3ddbea);
+              colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+            }
+          }
+        }
+      }
+      if (flow && p.showWake) {
+        // Optional arrows expose slow/reversed downstream cells from the field,
+        // without adding synthetic turbulence to computed data.
+        for (let gy = 4; gy < flow.ny - 4; gy += 8) {
+          for (let gx = Math.floor(flow.nx / 2); gx < flow.nx - 4; gx += 8) {
+            const i = gy * flow.nx + gx;
+            const vx = flow.velocity[i],
+              vy = -flow.velocity[flow.nx * flow.ny + i];
+            if (flow.mask[i] || vx >= 0.05 || Math.hypot(vx, vy) < 1e-5)
+              continue;
+            const direction = new THREE.Vector3(vx, vy, 0).normalize();
+            trails.add(
+              new THREE.ArrowHelper(
+                direction,
+                new THREE.Vector3(
+                  (gx / (flow.nx - 1)) * 16 - 8,
+                  domainHalf - gy * cellSize(flow),
+                  0.9,
+                ),
+                0.22,
+                0x78b9fa,
+                0.06,
+                0.04,
+              ),
+            );
+          }
+        }
+      }
+      const lineGeometry = new THREE.BufferGeometry();
+      lineGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      lineGeometry.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(colors, 3),
+      );
+      trails.add(
+        new THREE.LineSegments(
+          lineGeometry,
+          new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.045,
+            toneMapped: false,
+          }),
+        ),
+      );
+      if (
+        lastTraceCase !== p.caseId ||
+        lastTraceFlow !== p.flowData ||
+        lastTraceMask !== p.previewMask
+      ) {
+        tracers = p.previewMask
+          ? []
+          : Array.from({ length: tracerCount }, () => {
+              const tracer: Tracer = {
+                x: 0,
+                y: 0,
+                z: 0,
+                age: 0,
+                life: 0,
+                history: new Float32Array(historyLength * 3),
+              };
+              respawn(tracer, true);
+              return tracer;
+            });
+        lastTraceCase = p.caseId;
+        lastTraceFlow = p.flowData;
+        lastTraceMask = p.previewMask;
+      }
+      const smokeGeometry = new THREE.BufferGeometry();
+      const vertexCount = tracers.length * historyLength * 2;
+      smokeGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(
+          new Float32Array(vertexCount * 3),
+          3,
+        ).setUsage(THREE.DynamicDrawUsage),
+      );
+      smokeGeometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(
+          new Float32Array(vertexCount * 3),
+          3,
+        ).setUsage(THREE.DynamicDrawUsage),
+      );
+      smokeGeometry.setAttribute(
+        "trailOpacity",
+        new THREE.BufferAttribute(new Float32Array(vertexCount), 1).setUsage(
+          THREE.DynamicDrawUsage,
+        ),
+      );
+      const uv = new Float32Array(vertexCount * 2),
+        indices: number[] = [];
+      for (let i = 0; i < tracers.length; i++)
+        for (let h = 0; h < historyLength; h++) {
+          const v = (i * historyLength + h) * 2;
+          uv[v * 2] = h / (historyLength - 1);
+          uv[v * 2 + 1] = -1;
+          uv[(v + 1) * 2] = h / (historyLength - 1);
+          uv[(v + 1) * 2 + 1] = 1;
+          if (h < historyLength - 1)
+            indices.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+        }
+      smokeGeometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+      smokeGeometry.setIndex(indices);
+      smoke = new THREE.Mesh(
+        smokeGeometry,
+        new THREE.ShaderMaterial({
+          vertexColors: true,
+          transparent: true,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          blending: THREE.NormalBlending,
+          vertexShader: `attribute float trailOpacity; varying vec3 vColor; varying float vOpacity; varying vec2 vUv;
+          void main() { vColor = color; vOpacity = trailOpacity; vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+          fragmentShader: `varying vec3 vColor; varying float vOpacity; varying vec2 vUv;
+          void main() { float edge = exp(-vUv.y * vUv.y * 5.0);
+            float head = smoothstep(0.0, 0.12, vUv.x);
+            gl_FragColor = vec4(vColor, edge * head * vOpacity * 0.13);
+            #include <tonemapping_fragment>
+            #include <colorspace_fragment>
+          }`,
+        }),
+      );
+      smoke.frustumCulled = false;
+      trails.add(smoke);
+      renderer.shadowMap.needsUpdate = true;
+    };
+    const resize = () => {
+      const width = Math.max(host.clientWidth, 1),
+        height = Math.max(host.clientHeight, 1);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+      if (width <= 550) placeCamera();
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+    resize();
+    let frame = 0,
+      lastTime = performance.now(),
+      clock = 0,
+      fpsTime = lastTime,
+      frames = 0;
+    const animate = (now: number) => {
+      const p = latest.current;
+      const assetReady = hasDetailedCar();
+      if (assetReady !== detailedLoaded) {
+        detailedLoaded = assetReady;
+        framedCase = "";
+      }
+      const key = `${p.caseId}|${p.showVoxels}|${p.showPressure}|${p.showWake}|${p.flowData?.nx ?? ""}|${assetReady}`;
+      if (
+        key !== previousKey ||
+        activeFlow !== p.flowData ||
+        activeMask !== p.previewMask
+      ) {
+        previousKey = key;
+        activeFlow = p.flowData;
+        activeMask = p.previewMask;
+        rebuild();
+      }
+      const dt = Math.max(0, Math.min((now - lastTime) / 1000, 0.05));
+      lastTime = now;
+      if (!p.paused) clock += (dt * Math.max(p.windSpeed, 1)) / 15;
+      if (smoke) {
+        const geometry = smoke.geometry;
+        const positions = geometry.attributes.position.array as Float32Array;
+        const colors = geometry.attributes.color.array as Float32Array;
+        const opacity = geometry.attributes.trailOpacity.array as Float32Array;
+        camera.getWorldDirection(viewDirection);
+        const speed = (2.3 * Math.max(p.windSpeed, 1)) / 15;
+        const substeps = Math.max(1, Math.ceil(dt / 0.012));
+        tracers.forEach((tracer, i) => {
+          if (!p.paused) {
+            tracer.age += dt;
+            let reset = tracer.age > tracer.life;
+            for (let step = 0; step < substeps && !reset; step++) {
+              const v = sample(tracer.x, tracer.y),
+                timeStep = (dt / substeps) * speed;
+              const midpoint = sample(
+                tracer.x + (v.vx * timeStep) / 2,
+                tracer.y + (v.vy * timeStep) / 2,
+              );
+              const x = tracer.x + midpoint.vx * timeStep,
+                y = tracer.y + midpoint.vy * timeStep;
+              const end = sample(x, y);
+              if (
+                v.solid ||
+                midpoint.solid ||
+                end.solid ||
+                !Number.isFinite(x + y) ||
+                x < -8 ||
+                x > 7.95 ||
+                Math.abs(y) > domainHalf * 0.99
+              )
+                reset = true;
+              else {
+                tracer.x = x;
+                tracer.y = y;
+              }
+            }
+            if (reset) respawn(tracer, false);
+            tracer.history.copyWithin(3, 0, (historyLength - 1) * 3);
+            tracer.history[0] = tracer.x;
+            tracer.history[1] = tracer.y;
+            tracer.history[2] = tracer.z;
+          }
+          const history = tracer.history;
+          const local = sample(tracer.x, tracer.y);
+          const c = new THREE.Color(0xbdcbd3);
+          if (p.showPressure)
+            c.lerp(pressureColor(local.p, pressureSpan), 0.32);
+          const birth = Math.min(tracer.age / 0.3, 1),
+            death = Math.min((tracer.life - tracer.age) / 0.6, 1);
+          for (let h = 0; h < historyLength; h++) {
+            const j = h * 3,
+              neighbour = (h === 0 ? 1 : h - 1) * 3;
+            const tangentSign = h === 0 ? -1 : 1;
+            const tx = (history[neighbour] - history[j]) * tangentSign,
+              ty = (history[neighbour + 1] - history[j + 1]) * tangentSign;
+            let sx = -viewDirection.z * ty,
+              sy = viewDirection.z * tx,
+              sz = viewDirection.x * ty - viewDirection.y * tx;
+            const norm = Math.hypot(sx, sy, sz) || 1,
+              fade = 1 - h / (historyLength - 1);
+            const width = (0.045 + 0.1 * Math.sqrt(1 - fade)) * Math.sqrt(fade);
+            sx *= width / norm;
+            sy *= width / norm;
+            sz *= width / norm;
+            for (let side = 0; side < 2; side++) {
+              const vertex = (i * historyLength + h) * 2 + side,
+                offset = vertex * 3,
+                sign = side === 0 ? -1 : 1;
+              positions[offset] = history[j] + sx * sign;
+              positions[offset + 1] = history[j + 1] + sy * sign;
+              positions[offset + 2] = history[j + 2] + sz * sign;
+              colors[offset] = c.r;
+              colors[offset + 1] = c.g;
+              colors[offset + 2] = c.b;
+              opacity[vertex] = Math.max(
+                0,
+                Math.pow(fade, 1.4) * birth * death,
+              );
+            }
+          }
+        });
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+        geometry.attributes.trailOpacity.needsUpdate = true;
+      }
+      // The field and its mask stay aligned; inlet angle is already in computed data.
+      trails.visible = p.showStreamlines;
+      plane.visible = p.showSlicePlane;
+      plane.position.y = p.slicePosition;
+      controls.update();
+      renderer.render(scene, camera);
+      frames++;
+      if (now - fpsTime > 1000) {
+        p.onFpsUpdate?.(Math.round((frames * 1000) / (now - fpsTime)));
+        frames = 0;
+        fpsTime = now;
+      }
+      frame = requestAnimationFrame(animate);
+    };
+    let activeFlow: FlowData | null = null;
+    let activeMask: Props["previewMask"] = null;
+    frame = requestAnimationFrame(animate);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      controls.dispose();
+      cameraControl.current = null;
+      release(object);
+      release(trails);
+      grid.geometry.dispose();
+      (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(
+        (m) => m.dispose(),
+      );
+      tunnel.geometry.dispose();
+      (tunnel.material as THREE.Material).dispose();
+      plane.geometry.dispose();
+      (plane.material as THREE.Material).dispose();
+      shadow.geometry.dispose();
+      (shadow.material as THREE.Material).dispose();
+      floor.geometry.dispose();
+      (floor.material as THREE.Material).dispose();
+      environmentTarget.dispose();
+      key.shadow.dispose();
+      renderer.dispose();
+      host.replaceChildren();
     };
   }, []);
-
-  const buildMaskExtrusion = (maskData: Uint8Array, nx: number, ny: number, group: THREE.Group) => {
-    const voxelGeom = new THREE.BoxGeometry(0.11, 0.06, 0.11);
-    const voxelMat = new THREE.MeshStandardMaterial({
-      color: 0x10b981,
-      roughness: 0.35,
-      metalness: 0.5,
-      flatShading: true,
-    });
-
-    const step = 2;
-    for (let gy = 0; gy < ny; gy += step) {
-      for (let gx = 0; gx < nx; gx += step) {
-        const offset = gy * nx + gx;
-        if (maskData[offset] === 0) continue;
-
-        const worldX = ((gx / (nx - 1)) * 16) - 8;
-        const worldY = 2 - ((gy / (ny - 1)) * 4);
-        const mesh = new THREE.Mesh(voxelGeom, voxelMat);
-        mesh.position.set(worldX, worldY, 0);
-        group.add(mesh);
-      }
-    }
-  };
-
-  // Update Obstacle Geometry (Smooth vs Voxelized) when caseId or showVoxels changes
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    if (obstacleRef.current) {
-      scene.remove(obstacleRef.current);
-      obstacleRef.current.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          if (child.material) {
-            if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-            else child.material.dispose();
-          }
-        }
-      });
-    }
-
-    const group = new THREE.Group();
-    let geom: THREE.BufferGeometry;
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.1,
-      metalness: 0.8,
-      flatShading: true,
-    });
-
-    const wireMat = new THREE.MeshBasicMaterial({
-      color: 0x00f2fe,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.25
-    });
-
-    // Helper to generate voxel cubes procedurally
-    const addVoxels = (carGroup: THREE.Group, coordinates: [number, number, number][]) => {
-      const voxelGeom = new THREE.BoxGeometry(0.25, 0.25, 0.25);
-      const voxelMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.3, metalness: 0.7 });
-      coordinates.forEach(([x, y, z]) => {
-        const mesh = new THREE.Mesh(voxelGeom, voxelMat);
-        mesh.position.set(x, y, z);
-        carGroup.add(mesh);
-      });
-    };
-
-    if (showVoxels) {
-      // Phase 5 Voxelized representations
-      const voxelGroup = new THREE.Group();
-      const coords: [number, number, number][] = [];
-
-      if (caseId.includes('car')) {
-        // Car profile: low chassis, cabin in middle
-        // Bounding box: 2.5 length, 0.6 height, 1.2 width
-        for (let x = -1.2; x <= 1.2; x += 0.28) {
-          for (let z = -0.5; z <= 0.5; z += 0.28) {
-            coords.push([x, -0.4, z]); // Floor board
-            coords.push([x, -0.15, z]); // Lower body
-            // Cabin in center
-            if (x >= -0.6 && x <= 0.4) {
-              coords.push([x, 0.1, z]);
-              coords.push([x, 0.35, z]);
-            }
-          }
-        }
-        addVoxels(voxelGroup, coords);
-      } else if (caseId.includes('drone')) {
-        // Center cylinder + arms
-        for (let r = 0; r <= 0.4; r += 0.2) {
-          for (let th = 0; th < Math.PI * 2; th += Math.PI / 4) {
-            coords.push([r * Math.cos(th), 0, r * Math.sin(th)]);
-            coords.push([r * Math.cos(th), 0.2, r * Math.sin(th)]);
-          }
-        }
-        // Arm vectors (x = y)
-        for (let d = 0.4; d <= 1.2; d += 0.25) {
-          coords.push([d, 0.1, d]);
-          coords.push([-d, 0.1, d]);
-          coords.push([d, 0.1, -d]);
-          coords.push([-d, 0.1, -d]);
-        }
-        addVoxels(voxelGroup, coords);
-      } else if (caseId.includes('airfoil')) {
-        // Tapered wing section
-        for (let x = -1.0; x <= 1.0; x += 0.25) {
-          const thickness = 0.4 * (1.0 - (x + 1.0)/2.0); // Taper leading-to-trailing
-          const maxZ = 1.2;
-          for (let z = -maxZ; z <= maxZ; z += 0.3) {
-            coords.push([x, 0, z]);
-            if (thickness > 0.1) {
-              coords.push([x, thickness / 2, z]);
-              coords.push([x, -thickness / 2, z]);
-            }
-          }
-        }
-        addVoxels(voxelGroup, coords);
-      } else if (caseId.includes('cylinder')) {
-        // Circular cylinder cross-section extruded along Z
-        for (let r = 0; r <= 0.7; r += 0.22) {
-          for (let th = 0; th < Math.PI * 2; th += Math.PI / 6) {
-            const x = r * Math.cos(th);
-            const y = r * Math.sin(th);
-            for (let z = -1.0; z <= 1.0; z += 0.35) {
-              coords.push([x, y, z]);
-            }
-          }
-        }
-        addVoxels(voxelGroup, coords);
-      } else if (flowData) {
-        buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, voxelGroup);
-      } else {
-        for (let x = -0.8; x <= 0.8; x += 0.3) {
-          for (let y = -0.3; y <= 0.3; y += 0.3) {
-            coords.push([x, y, 0]);
-          }
-        }
-        addVoxels(voxelGroup, coords);
-      }
-      group.add(voxelGroup);
-      group.position.set(0, 0, 0);
-    } else {
-      // Smooth visual styling (Standard templates)
-      if (caseId === 'sports_car' || caseId === 'sports_car_v1') {
-        const carGroup = new THREE.Group();
-        const bodyGeom = new THREE.BoxGeometry(2.5, 0.6, 1.2);
-        const bodyMesh = new THREE.Mesh(bodyGeom, mat);
-        bodyMesh.castShadow = true;
-        bodyMesh.receiveShadow = true;
-        carGroup.add(bodyMesh);
-
-        const cabinGeom = new THREE.BoxGeometry(1.2, 0.5, 1.0);
-        cabinGeom.translate(-0.2, 0.45, 0);
-        const cabinMesh = new THREE.Mesh(cabinGeom, mat);
-        cabinMesh.castShadow = true;
-        carGroup.add(cabinMesh);
-
-        const wheelGeom = new THREE.CylinderGeometry(0.35, 0.35, 0.2, 16);
-        wheelGeom.rotateX(Math.PI / 2);
-        const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0c0d12, roughness: 0.8 });
-        
-        const wheels = [
-          [-0.7, -0.25, 0.6],
-          [-0.7, -0.25, -0.6],
-          [0.7, -0.25, 0.6],
-          [0.7, -0.25, -0.6]
-        ];
-        wheels.forEach(([x, y, z]) => {
-          const mesh = new THREE.Mesh(wheelGeom, wheelMat);
-          mesh.position.set(x, y, z);
-          carGroup.add(mesh);
-        });
-
-        const wMesh = new THREE.Mesh(bodyGeom, wireMat);
-        carGroup.add(wMesh);
-        
-        group.add(carGroup);
-        group.position.set(0, -0.5, 0);
-      } else if (caseId === 'drone' || caseId === 'drone_v1') {
-        const droneGroup = new THREE.Group();
-        const coreGeom = new THREE.CylinderGeometry(0.4, 0.4, 0.25, 8);
-        const coreMesh = new THREE.Mesh(coreGeom, mat);
-        droneGroup.add(coreMesh);
-
-        const armGeom = new THREE.BoxGeometry(2.4, 0.06, 0.12);
-        const arm1 = new THREE.Mesh(armGeom, mat);
-        arm1.rotateY(Math.PI / 4);
-        const arm2 = new THREE.Mesh(armGeom, mat);
-        arm2.rotateY(-Math.PI / 4);
-        droneGroup.add(arm1, arm2);
-
-        const motorGeom = new THREE.CylinderGeometry(0.12, 0.12, 0.2, 8);
-        const propGeom = new THREE.RingGeometry(0.45, 0.5, 32);
-        propGeom.rotateX(Math.PI / 2);
-        const propMat = new THREE.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
-
-        const motorPositions = [
-          [0.85, 0.1, 0.85],
-          [0.85, 0.1, -0.85],
-          [-0.85, 0.1, 0.85],
-          [-0.85, 0.1, -0.85]
-        ];
-        motorPositions.forEach(([x, y, z]) => {
-          const motor = new THREE.Mesh(motorGeom, mat);
-          motor.position.set(x, y, z);
-          
-          const prop = new THREE.Mesh(propGeom, propMat);
-          prop.position.set(x, y + 0.1, z);
-          
-          droneGroup.add(motor, prop);
-        });
-
-        const wMesh = new THREE.Mesh(coreGeom, wireMat);
-        droneGroup.add(wMesh);
-
-        group.add(droneGroup);
-        group.position.set(0, 0, 0);
-      } else if (caseId === 'airfoil' || caseId === 'airfoil_v1') {
-        const wingGroup = new THREE.Group();
-        const shape = new THREE.Shape();
-        shape.moveTo(-1.0, 0.0);
-        shape.bezierCurveTo(-0.6, 0.2, 0.4, 0.35, 1.0, 0.0);
-        shape.bezierCurveTo(0.4, -0.35, -0.6, -0.2, -1.0, 0.0);
-
-        const extrudeSettings = {
-          depth: 3.0,
-          bevelEnabled: false
-        };
-        
-        geom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-        geom.center();
-        geom.rotateX(Math.PI / 2);
-        
-        const wingMesh = new THREE.Mesh(geom, mat);
-        wingMesh.castShadow = true;
-        wingMesh.receiveShadow = true;
-        wingGroup.add(wingMesh);
-
-        const wMesh = new THREE.Mesh(geom, wireMat);
-        wingGroup.add(wMesh);
-
-        group.add(wingGroup);
-        group.position.set(0, 0, 0);
-      } else if (caseId === 'cylinder' || caseId === 'cylinder_v1') {
-        const cylGroup = new THREE.Group();
-        // Visual stand-in for the 2D circular-cylinder cross-section (extruded)
-        const cylGeom = new THREE.CylinderGeometry(0.75, 0.75, 2.4, 32);
-        cylGeom.rotateX(Math.PI / 2);
-        const cylMesh = new THREE.Mesh(cylGeom, mat);
-        cylMesh.castShadow = true;
-        cylMesh.receiveShadow = true;
-        cylGroup.add(cylMesh);
-        const wMesh = new THREE.Mesh(cylGeom, wireMat);
-        cylGroup.add(wMesh);
-        group.add(cylGroup);
-        group.position.set(0, 0, 0);
-      } else if (flowData) {
-        const extrudeGroup = new THREE.Group();
-        buildMaskExtrusion(flowData.mask, flowData.nx, flowData.ny, extrudeGroup);
-        group.add(extrudeGroup);
-        group.position.set(0, 0, 0);
-      } else {
-        const boxGeom = new THREE.BoxGeometry(1.8, 0.8, 0.2);
-        const mesh = new THREE.Mesh(boxGeom, mat);
-        const wMesh = new THREE.Mesh(boxGeom, wireMat);
-        group.add(mesh, wMesh);
-        group.position.set(0, 0, 0);
-      }
-    }
-
-    scene.add(group);
-    obstacleRef.current = group;
-  }, [caseId, showVoxels, flowData]);
-
-  // Main animation frame loop: calculates streamlines, updates slice plane, and updates slice vector arrows
-  useEffect(() => {
-    let lastTime = performance.now();
-    let frameCount = 0;
-    let fpsSampleTime = performance.now();
-
-    const animate = () => {
-      const now = performance.now();
-      const dt = (now - lastTime) / 1000;
-      lastTime = now;
-
-      frameCount += 1;
-      if (now - fpsSampleTime >= 500) {
-        const measuredFps = Math.round((frameCount * 1000) / (now - fpsSampleTime));
-        onFpsUpdate?.(measuredFps);
-        frameCount = 0;
-        fpsSampleTime = now;
-      }
-
-      const camera = cameraRef.current;
-      const scene = sceneRef.current;
-
-      // 1. Rotate obstacle matching windAngle
-      if (obstacleRef.current) {
-        const targetAngleRad = (windAngle * Math.PI) / 180;
-        obstacleRef.current.rotation.y = THREE.MathUtils.lerp(
-          obstacleRef.current.rotation.y, 
-          targetAngleRad, 
-          0.1
-        );
-      }
-
-      // 2. Position Slice Plane (Phase 5)
-      const slicePlaneMesh = slicePlaneMeshRef.current;
-      const arrowsGroup = arrowsGroupRef.current;
-      
-      if (slicePlaneMesh && arrowsGroup) {
-        if (showSlicePlane) {
-          slicePlaneMesh.visible = true;
-          slicePlaneMesh.position.y = slicePosition;
-          
-          arrowsGroup.visible = true;
-          arrowsGroup.position.y = slicePosition;
-          
-          // Update each arrow helper direction and length
-          const velocityScale = windSpeed / 0.08;
-          const speed = windSpeed * 0.15;
-          const objectPos = new THREE.Vector3(0, obstacleRef.current ? obstacleRef.current.position.y : 0, 0);
-          
-          let obstacleRadius = 1.2;
-          if (caseId.includes('car')) obstacleRadius = 1.4;
-          else if (caseId.includes('drone')) obstacleRadius = 1.5;
-          else if (caseId.includes('airfoil')) obstacleRadius = 1.1;
-          else if (caseId.includes('cylinder')) obstacleRadius = 0.85;
-
-          arrowsGroup.children.forEach((child) => {
-            if (child instanceof THREE.ArrowHelper) {
-              const arrowPos = child.position.clone();
-              // Compute local 3D position relative to world
-              const worldArrowPos = new THREE.Vector3(arrowPos.x, slicePosition, arrowPos.z);
-              
-              let vx = speed;
-              let vy = 0;
-              let pVal = 0.0;
-              
-              if (flowData) {
-                const nx = flowData.nx;
-                const ny = flowData.ny;
-                
-                const grid_x = Math.max(0, Math.min(nx - 1, Math.floor(((worldArrowPos.x + 8) / 16) * (nx - 1))));
-                const grid_y = Math.max(0, Math.min(ny - 1, (ny - 1) - Math.floor(((slicePosition + 2) / 4) * (ny - 1))));
-                
-                const offset = grid_y * nx + grid_x;
-                const isObst = flowData.mask[offset] > 0;
-                
-                if (isObst) {
-                  vx = 0.001;
-                  vy = 0;
-                } else {
-                  vx = flowData.velocity[offset] * velocityScale * 0.15;
-                  vy = -flowData.velocity[ny * nx + offset] * velocityScale * 0.15;
-                  pVal = flowData.pressure[offset];
-                }
-              } else {
-                // Procedural Potential Flow (Fallback)
-                const distVec = worldArrowPos.clone().sub(objectPos);
-                const dist2D = Math.sqrt(distVec.x * distVec.x + distVec.y * distVec.y);
-                
-                if (dist2D < obstacleRadius * 3.5 && worldArrowPos.x < obstacleRadius * 3.0) {
-                  const factor = Math.pow(obstacleRadius / Math.max(dist2D, 0.2), 2);
-                  if (dist2D > 0.05) {
-                    const normal = distVec.clone().normalize();
-                    const radialComponent = speed * normal.x * factor;
-                    vx = speed - radialComponent * normal.x;
-                    vy = -radialComponent * normal.y;
-                  }
-                }
-              }
-              
-              // Set arrow helper direction
-              const dirVec = new THREE.Vector3(vx, vy, 0);
-              const mag = dirVec.length();
-              if (mag > 0.001) {
-                child.setDirection(dirVec.normalize());
-              }
-              
-              // Length scales with flow speed
-              const finalLength = Math.max(0.1, Math.min(1.2, mag * 0.8));
-              child.setLength(finalLength, 0.15, 0.08);
-              
-              // Set color based on pressure
-              let color = 0x00f2fe; // neutral cyan
-              if (showPressure) {
-                if (flowData) {
-                  const normP = (pVal + 0.02) / 0.04;
-                  if (normP > 0.65) color = 0xff4757; // red
-                  else if (normP < 0.35) color = 0x4facfe; // blue
-                  else color = 0x10b981; // green
-                } else {
-                  const dist = worldArrowPos.distanceTo(objectPos);
-                  if (dist < obstacleRadius * 2.5) {
-                    if (worldArrowPos.x < -0.15) color = 0xff4757;
-                    else color = 0x4facfe;
-                  }
-                }
-              }
-              child.setColor(color);
-            }
-          });
-        } else {
-          slicePlaneMesh.visible = false;
-          arrowsGroup.visible = false;
-        }
-      }
-
-      // 3. Animate streamlines (particles)
-      const particles = particlesRef.current;
-      const pointsGeom = pointsGeometryRef.current;
-      const points = pointsRef.current;
-
-      if (particles && pointsGeom && points) {
-        if (showStreamlines) {
-          points.visible = true;
-          const positions = pointsGeom.attributes.position.array as Float32Array;
-          const colors = pointsGeom.attributes.color.array as Float32Array;
-
-          let obstacleRadius = 1.2;
-          if (caseId.includes('car')) obstacleRadius = 1.4;
-          else if (caseId.includes('drone')) obstacleRadius = 1.5;
-          else if (caseId.includes('airfoil')) obstacleRadius = 1.1;
-          else if (caseId.includes('cylinder')) obstacleRadius = 0.85;
-
-          const speed = windSpeed * 0.15;
-          const objectPos = new THREE.Vector3(0, obstacleRef.current ? obstacleRef.current.position.y : 0, 0);
-
-          for (let i = 0; i < particleCount; i++) {
-            const p = particles[i];
-            
-            let vx = speed;
-            let vy = 0;
-            let vz = 0;
-            let pressureVal = 0.0;
-
-            if (flowData) {
-              const nx = flowData.nx;
-              const ny = flowData.ny;
-              
-              const grid_x = Math.max(0, Math.min(nx - 1, Math.floor(((p.pos.x + 8) / 16) * (nx - 1))));
-              const grid_y = Math.max(0, Math.min(ny - 1, (ny - 1) - Math.floor(((p.pos.y + 2) / 4) * (ny - 1))));
-              
-              const offset = grid_y * nx + grid_x;
-              
-              const isObstacle = flowData.mask[offset] > 0;
-              
-              if (isObstacle) {
-                p.pos.x = -8.0;
-                p.pos.y = p.baseY;
-                p.pos.z = p.baseZ;
-                p.age = 0;
-                p.life = 100 + Math.random() * 50;
-                continue;
-              }
-              
-              const u_x = flowData.velocity[offset];
-              const u_y = -flowData.velocity[ny * nx + offset];
-              
-              const velocityScale = speed / 0.08;
-              vx = u_x * velocityScale * 0.15;
-              vy = u_y * velocityScale * 0.15;
-              vz = 0;
-              
-              if (showWake && p.pos.x > 0.0 && u_x < 0.05) {
-                const wakeFactor = Math.max(0, 1 - (u_x / 0.08));
-                vy += (Math.random() - 0.5) * speed * 0.08 * wakeFactor;
-                vz += (Math.random() - 0.5) * speed * 0.08 * wakeFactor;
-              }
-              
-              pressureVal = flowData.pressure[offset];
-            } else {
-              const distVec = p.pos.clone().sub(objectPos);
-              const dist2D = Math.sqrt(distVec.x * distVec.x + distVec.y * distVec.y);
-
-              if (dist2D < obstacleRadius * 3.5 && p.pos.x < obstacleRadius * 3.0) {
-                const factor = Math.pow(obstacleRadius / Math.max(dist2D, 0.2), 2);
-                if (dist2D > 0.05) {
-                  const normal = distVec.clone().normalize();
-                  const radialComponent = speed * normal.x * factor;
-                  vx = speed - radialComponent * normal.x;
-                  vy = -radialComponent * normal.y;
-                  
-                  if (p.pos.x > 0.2) {
-                    vx *= (0.2 + 0.3 * (dist2D / (obstacleRadius * 3)));
-                    if (showWake) {
-                      vy += (Math.random() - 0.5) * speed * 0.4 * factor;
-                      vz += (Math.random() - 0.5) * speed * 0.4 * factor;
-                    }
-                  }
-                }
-              }
-            }
-
-            p.pos.x += vx * dt * 60;
-            p.pos.y += vy * dt * 60;
-            p.pos.z += vz * dt * 60;
-
-            const angleRad = (windAngle * Math.PI) / 180;
-            if (Math.abs(windAngle) > 0.1 && p.pos.x < -obstacleRadius) {
-              p.pos.y += Math.sin(angleRad) * speed * dt * 30;
-            }
-
-            if (p.pos.x > 8.0 || p.age > p.life) {
-              p.pos.x = -8.0;
-              p.pos.y = p.baseY;
-              p.pos.z = p.baseZ;
-              p.age = 0;
-              p.life = 100 + Math.random() * 50;
-            } else {
-              p.age += 1;
-            }
-
-            const idx = i * 3;
-            positions[idx] = p.pos.x;
-            positions[idx+1] = p.pos.y;
-            positions[idx+2] = p.pos.z;
-
-            let r = 0.0, g = 0.85, b = 1.0;
-
-            if (showPressure) {
-              if (flowData) {
-                const normP = (pressureVal + 0.02) / 0.04;
-                const clampP = Math.max(0.0, Math.min(1.0, normP));
-                
-                if (clampP > 0.65) {
-                  const intensity = (clampP - 0.65) / 0.35;
-                  r = 0.5 + intensity * 0.5;
-                  g = 0.7 * (1 - intensity);
-                  b = 0;
-                } else if (clampP < 0.35) {
-                  const intensity = (0.35 - clampP) / 0.35;
-                  r = 0;
-                  g = 0.8 * (1 - intensity);
-                  b = 0.6 + intensity * 0.4;
-                } else {
-                  r = 0;
-                  g = 0.9;
-                  b = 0.3;
-                }
-              } else {
-                const dist = p.pos.distanceTo(objectPos);
-                if (dist < obstacleRadius * 2.8) {
-                  if (p.pos.x < -0.15) {
-                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 1.8)));
-                    r = intensity;
-                    g = 1 - intensity * 0.8;
-                    b = 1 - intensity;
-                  } else if (p.pos.x >= -0.15 && p.pos.x <= 0.5) {
-                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 2.0)));
-                    r = 0;
-                    g = 0.7 * (1 - intensity);
-                    b = 1.0;
-                  } else {
-                    const intensity = Math.max(0, 1 - (dist / (obstacleRadius * 3.0)));
-                    r = intensity * 0.6;
-                    g = 0.8;
-                    b = 0.2;
-                  }
-                }
-              }
-            }
-
-            colors[idx] = r;
-            colors[idx+1] = g;
-            colors[idx+2] = b;
-          }
-
-          pointsGeom.attributes.position.needsUpdate = true;
-          pointsGeom.attributes.color.needsUpdate = true;
-        } else {
-          points.visible = false;
-        }
-      }
-
-      if (rendererRef.current && scene && camera) {
-        rendererRef.current.render(scene, camera);
-      }
-
-      requestRef.current = requestAnimationFrame(animate);
-    };
-
-    requestRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, [caseId, windSpeed, windAngle, showStreamlines, showPressure, showWake, flowData, showSlicePlane, slicePosition, onFpsUpdate]);
-
   return (
     <div className="tunnel-view-container">
-      <div ref={containerRef} className="canvas-container" />
-      
-      {/* Visual legends overlay */}
-      {showPressure && (
+      <div
+        ref={container}
+        className="canvas-container"
+        role="img"
+        aria-label={`${props.caseId} airflow visualization. ${props.previewMask ? "Imported obstacle mask; simulation has not run." : props.flowData ? "Loaded simulation field." : "Illustrative procedural preview."}`}
+      />
+      {props.caseId.includes("car") && !carReady && !assetError && (
+        <div className="working-overlay" role="status">
+          <span className="spinner" />
+          <strong>Preparing the car model</strong>
+        </div>
+      )}
+      {props.caseId.includes("car") && assetError && (
+        <div className="viewer-guidance">
+          Detailed model unavailable · basic preview
+        </div>
+      )}
+      {renderError && (
+        <div className="viewer-error">
+          WebGL is unavailable. Try a browser with hardware acceleration
+          enabled.
+        </div>
+      )}
+      {props.showPressure && !props.previewMask && (
         <div className="pressure-legend">
-          <div className="legend-title">Pressure Distribution</div>
-          <div className="legend-bar"></div>
+          <span>
+            Relative pressure {props.flowData ? "(field)" : "(illustrative)"}
+          </span>
+          <div className="legend-bar" />
           <div className="legend-labels">
-            <span>Low (-p)</span>
+            <span>Low (−)</span>
             <span>Neutral</span>
-            <span>High (+p)</span>
+            <span>High (+)</span>
           </div>
         </div>
       )}
+      <div className="viewer-guidance">Drag to orbit · Scroll to zoom</div>
     </div>
   );
-};
+}

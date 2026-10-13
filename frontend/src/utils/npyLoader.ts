@@ -106,7 +106,9 @@ export function parseNpy(buffer: ArrayBuffer): NpyArray {
 }
 
 export async function fetchNpy(url: string): Promise<NpyArray> {
-  const response = await fetch(url);
+  // Demo arrays can be regenerated at the same URL. Revalidate before displaying
+  // them so browser freshness heuristics cannot mix an old field with new geometry.
+  const response = await fetch(url, { cache: 'no-cache' });
   if (!response.ok) {
     throw new Error(`Failed to fetch npy file: ${response.statusText}`);
   }

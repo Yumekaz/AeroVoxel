@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 import numpy as np
 
 from app.solvers.lbm_2d import LbmSolver2D
@@ -10,49 +12,26 @@ TAU = 0.6
 U_INLET = 0.08
 
 
+def _display_projection(case_id: str) -> np.ndarray:
+    source = Path(__file__).resolve().parents[3] / "shared" / "demoGeometry.json"
+    with source.open(encoding="utf-8") as handle:
+        data = json.load(handle)
+    if data["nx"] != NX or data["ny"] != NY:
+        raise ValueError("Display projection grid does not match the cache grid")
+    values = np.asarray(data["cases"][case_id]["mask"])
+    if values.size != NX * NY or not np.all((values == 0) | (values == 1)):
+        raise ValueError("Invalid display projection occupancy")
+    return values.reshape(NY, NX).astype(bool)
+
+
 def make_car_mask():
-    mask = np.zeros((NY, NX), dtype=bool)
-    for x in range(NX):
-        for y in range(NY):
-            if (40 <= x <= 80 and 48 <= y <= 60):
-                if x < 50:
-                    slope_height = int(48 + (50 - x) * 1.2)
-                    if y >= slope_height:
-                        mask[y, x] = True
-                elif x > 72:
-                    slope_height = int(48 + (x - 72) * 1.5)
-                    if y >= slope_height:
-                        mask[y, x] = True
-                else:
-                    mask[y, x] = True
-            elif (50 <= x <= 72 and 38 <= y <= 48):
-                if x < 56:
-                    slope_height = int(38 + (56 - x) * 1.6)
-                    if y >= slope_height:
-                        mask[y, x] = True
-                elif x > 66:
-                    slope_height = int(38 + (x - 66) * 1.6)
-                    if y >= slope_height:
-                        mask[y, x] = True
-                else:
-                    mask[y, x] = True
-    return mask
+    """Exact side projection of the displayed concept-car geometry."""
+    return _display_projection("sports_car_v1")
 
 
 def make_drone_mask():
-    mask = np.zeros((NY, NX), dtype=bool)
-    cx, cy = 64, 32
-    for x in range(NX):
-        for y in range(NY):
-            if (x - cx) ** 2 + (y - cy) ** 2 <= 9 ** 2:
-                mask[y, x] = True
-            if 36 <= x <= 92 and 30 <= y <= 34:
-                mask[y, x] = True
-            if (x - 36) ** 2 + (y - cy) ** 2 <= 4 ** 2:
-                mask[y, x] = True
-            if (x - 92) ** 2 + (y - cy) ** 2 <= 4 ** 2:
-                mask[y, x] = True
-    return mask
+    """Exact side projection of the displayed quadcopter geometry."""
+    return _display_projection("drone_v1")
 
 
 def make_airfoil_mask():

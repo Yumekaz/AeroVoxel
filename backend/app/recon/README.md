@@ -2,9 +2,9 @@
 
 AeroVoxel uses a hardware-aware reconstruction engine chain:
 
-1. SF3D when its full runtime and hardware are available.
+1. In auto mode, SF3D only with its full runtime, a CUDA device, and at least 6144 MiB VRAM. An explicit CPU SF3D run remains opt-in.
 2. Depth Anything V2 Small on CPU/CUDA as the practical real-ML alternative. It predicts monocular depth, creates a depth-conditioned thickened mesh, then exports the center-slice mask.
-3. OpenCV 2D silhouette only when both ML engines are unavailable.
+3. OpenCV 2D silhouette when ML engines are unavailable or fail in auto mode. An explicit CUDA request never silently runs on CPU.
 
 The first two are real model-based inference paths; the last is explicitly not 3D or ML.
 
@@ -54,7 +54,7 @@ tensor operation succeeds.
 python scripts/run_recon_demo.py C:\path\to\phone-photo.jpg --engine auto --output-dir data/recon_outputs\R1 --register-for-api
 ```
 
-The output contains `mesh.glb`, `depth.npy`, `depth_preview.png`, `mask.npy`, and `result.json`. `result.json` reports the selected engine, device, fallback reason, timings, mesh validity, serialized-file validity, and mask statistics. With `--register-for-api`, the validated mask is copied into the existing upload-job storage and the result includes a UUID for `/api/simulate/simple`. This is the L1 integration boundary; the browser does not launch a multi-minute GPU job.
+An explicit Depth Anything run exports `mesh.glb`, `depth.npy`, `depth_preview.png`, `mask.npy`, and `result.json`. Auto mode preserves each engine attempt in its own `attempt_<engine>` directory; the root result points to the selected artifacts, and failure details are kept in `attempts.json`. `result.json` reports the selected engine, device, fallback reason, timings, mesh validity, serialized-file validity, and mask statistics. With `--register-for-api`, the validated mask is copied into the existing upload-job storage and the result includes a UUID for `/api/simulate/simple`. This is the L1 integration boundary; the browser does not launch a multi-minute GPU job.
 
 The engine-selection boundary keeps SF3D as the preferred real 3D engine,
 selects Depth Anything V2 Small when SF3D is unavailable, and only then uses
@@ -188,3 +188,36 @@ Relevant upstream references: [TripoSR](https://github.com/VAST-AI-Research/Trip
 ## Limits
 
 Neural reconstruction is best-effort prototype geometry, not metrology-grade 3D scanning. Single-view depth is ambiguous; transparent, reflective, occluded, blurred, and cluttered objects can fail. Flow remains educational LBM, not certified CFD. Do not commit private phone photos or downloaded model weights.
+
+
+## Browser import and CPU verification (2026-10-13)
+
+Use **Import mask** in the browser to select the exported `mask.npy`. The API
+accepts bounded NumPy v1/v2 `(64,128)` finite binary arrays, requires fluid cells
+on all domain boundaries, and returns a preview plus a simulation job. Inspect
+the imported geometry, then choose **Run 2D simulation**. No GPU inference is
+started by this browser action.
+
+Mesh slices map mesh X to solver columns and inverted mesh Y to rows. A uniform
+scale places the silhouette inside a centered 60x32-cell envelope, leaving
+surrounding flow space. Classical reconstruction fallback uses the same layout.
+Scale is normalized; no physical measurement is inferred.
+
+```powershell
+# From backend; activate the project environment first
+pip install -r requirements.txt -r requirements-test.txt
+python -m pytest tests -q
+python scripts/verify_recon_cpu.py app/recon/recon_manifest.synthetic.csv --engine depth_anything
+```
+
+The last command requires optional CPU reconstruction dependencies and the
+synthetic fixtures. It creates a fresh timestamped directory and records real
+model inference, serialized mesh validity, masks, LBM results and finite arrays.
+The 2026-10-13 local run completed all five synthetic cases through Depth
+Anything and CPU LBM. This verifies pipeline execution, not reconstruction
+accuracy or performance guarantees. Five consented real phone captures and
+CUDA/SF3D hardware validation are still outstanding.
+
+The live API now shares the surrogate dataset's characteristic-length formula.
+Live grid/time/inlet settings still differ from training conditions, so the
+surrogate is displayed as a separate fixed-condition educational proxy.

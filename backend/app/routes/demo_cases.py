@@ -1,4 +1,6 @@
 import os
+import json
+import math
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -20,7 +22,7 @@ DEMO_CASES = [
         "name": "Sports Car (Template)",
         "mode": "cached_2d",
         "mode_label": "Cached 2D demonstration field",
-        "description": "Low-drag vehicle profile with ground boundary flow structures.",
+        "description": "Concept car side silhouette with a matching CPU flow field.",
         "explanation": (
             "Air hits the front bumper creating a high-pressure stagnation zone. It accelerates over "
             "the hood and windshield (low pressure), then separates at the rear, creating a "
@@ -36,11 +38,11 @@ DEMO_CASES = [
         "name": "Quadcopter (Template)",
         "mode": "cached_2d",
         "mode_label": "Cached 2D demonstration field",
-        "description": "Complex vertical thrust profile with high drag wake.",
+        "description": "Stationary quadcopter side silhouette in crossflow.",
         "explanation": (
-            "Flow encounters bluff-body engine mounts and rotor disks. The arms create flow separation "
-            "and localized vortex shedding, resulting in a large wake turbulence index and substantial "
-            "drag relative to frontal area."
+            "The stationary body, arms and rotors form a side silhouette for this 2D flow field. "
+            "The rotor blades do not spin or generate thrust in this demonstration. "
+            "Pressure and wake estimates are educational proxies from the cached CPU solve."
         ),
         "drag_coefficient_estimate": 1.15,
         "lift_coefficient_estimate": 1.42,
@@ -114,9 +116,25 @@ def _case_assets_ready(case_id: str) -> bool:
     return all(os.path.exists(os.path.join(FLOW_ASSETS_DIR, name)) for name in required)
 
 
+def _with_generated_metrics(case: dict) -> dict:
+    """Use the recorded estimates of regenerated CPU fields, when present."""
+    path = os.path.join(FLOW_ASSETS_DIR, "visual_demo_generation.json")
+    if not os.path.isfile(path):
+        return case
+    with open(path, encoding="utf-8") as handle:
+        record = json.load(handle).get("cases", {}).get(case["case_id"])
+    if not record:
+        return case
+    metrics = record.get("metrics", {})
+    keys = ("drag_coefficient_estimate", "lift_coefficient_estimate", "wake_score")
+    if not all(isinstance(metrics.get(key), (int, float)) and math.isfinite(metrics[key]) for key in keys):
+        return case
+    return {**case, **{key: metrics[key] for key in keys}, "metrics_source": "Cached CPU field educational proxies"}
+
+
 def _available_demo_cases():
     """Catalog entries that have loadable flow arrays (happy-path safe)."""
-    return [c for c in DEMO_CASES if _case_assets_ready(c["case_id"])]
+    return [_with_generated_metrics(c) for c in DEMO_CASES if _case_assets_ready(c["case_id"])]
 
 
 @router.get("/demo-cases")
@@ -140,6 +158,7 @@ async def get_flow_field_metadata(case_id: str):
             ),
         )
 
+    case = _with_generated_metrics(case)
     return {
         "case_id": case_id,
         "name": case["name"],

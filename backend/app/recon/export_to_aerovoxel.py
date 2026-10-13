@@ -30,6 +30,23 @@ def _load_mesh(mesh_path: str) -> Any:
     return mesh
 
 
+def fit_mask_to_domain(mask: np.ndarray, nx: int = 128, ny: int = 64) -> np.ndarray:
+    """Keep XY proportions inside the same central 60x32 envelope as uploads."""
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 2 or not np.any(mask) or nx < 16 or ny < 16:
+        raise ValueError("A non-empty 2D mask and a domain >=16x16 are required")
+    ys, xs = np.where(mask)
+    cropped = mask[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    max_w, max_h = max(1, round(nx * 60 / 128)), max(1, round(ny / 2))
+    scale = min(max_w / cropped.shape[1], max_h / cropped.shape[0])
+    width, height = max(1, round(cropped.shape[1]*scale)), max(1, round(cropped.shape[0]*scale))
+    obstacle = cv2.resize(cropped.astype(np.uint8), (width, height), interpolation=cv2.INTER_NEAREST) > 0
+    domain = np.zeros((ny, nx), dtype=bool)
+    left, top = (nx-width)//2, (ny-height)//2
+    domain[top:top+height, left:left+width] = obstacle
+    return domain
+
+
 def mesh_to_center_slice_mask(
     mesh_path: str,
     output_path: str,
@@ -37,12 +54,12 @@ def mesh_to_center_slice_mask(
     ny: int = 64,
     z_fraction: float = 0.5,
     fill: bool = True,
-    voxel_resolution_factor: float = 2.0,
+    voxel_resolution_factor: float = 1.0,
 ) -> dict[str, Any]:
     """Voxelize a mesh and export its middle Z slice as a solver-ready mask.
 
     The exported array is ``(ny, nx)`` bool, matching ``/api/simulate/simple``.
-    The mesh is normalized into the full domain while preserving aspect ratio;
+    The mesh is normalized into a central envelope while preserving aspect ratio;
     it is intentionally a domain mask, not a metrically scaled reconstruction.
     """
     if not os.path.isfile(mesh_path):
@@ -71,9 +88,10 @@ def mesh_to_center_slice_mask(
         raise ValueError("Mesh voxelization produced an empty occupancy grid")
 
     z_index = min(dense.shape[2] - 1, int(round(z_fraction * (dense.shape[2] - 1))))
-    slice_mask = dense[:, :, z_index].astype(np.uint8) * 255
-    # OpenCV uses (width, height); the final array is (ny, nx).
-    resized = cv2.resize(slice_mask, (nx, ny), interpolation=cv2.INTER_AREA) >= 128
+    # Trimesh occupancy axes are X,Y,Z; solver arrays are rows Y, columns X.
+    # Positive mesh Y is up; image/solver row Y grows down.
+    slice_mask = dense[:, :, z_index].T[::-1, :]
+    resized = fit_mask_to_domain(slice_mask, nx=nx, ny=ny)
     if not np.any(resized):
         raise ValueError("Center slice is empty; try a different z_fraction or mesh orientation")
 

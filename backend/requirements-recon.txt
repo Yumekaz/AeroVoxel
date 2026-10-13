@@ -5,7 +5,7 @@ Pillow>=10.0
 trimesh>=4.0
 rembg>=2.0
 tqdm>=4.66
-transformers>=4.50
+transformers>=4.50,<5
 safetensors>=0.4
 
 # SF3D itself is an official source checkout, not a PyPI dependency:

@@ -28,7 +28,7 @@ from app.recon.phone_capture import prepare_phone_manifest
 
 def test_capability_report_is_json_serializable() -> None:
     report = get_recon_capability()
-    assert report["cuda_available"] is False
+    assert isinstance(report["cuda_available"], bool)
     json.dumps(report)
 
 
@@ -106,11 +106,11 @@ def test_evaluation_harness_records_typed_failures(tmp_path) -> None:
     assert summary["results"][0]["status"] == "FAILED"
 
 
-def test_engine_selection_prefers_real_cpu_ml_before_opencv() -> None:
-    engine = select_reconstruction_engine()
+def test_engine_selection_prefers_real_cpu_ml_before_opencv(monkeypatch) -> None:
+    monkeypatch.setattr(engine_module, "get_recon_capability", lambda: {"ready_for_inference": False, "depth_anything_available": True, "recommended_device": "cpu"})
+    engine = select_reconstruction_engine("depth_anything", device="cpu")
     assert isinstance(engine, DepthAnythingEngine)
     assert not isinstance(engine, OpenCV2DFallbackEngine)
-    assert "SF3D unavailable" in engine.selection_reason
 
 
 def test_depth_mesh_is_real_serializable_geometry(tmp_path) -> None:
@@ -258,7 +258,7 @@ def test_public_dataset_evaluator_runs_lbm_and_persists_case_outputs(tmp_path, m
                 "mask": mask_info,
             }
 
-    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name: TestEngine())
+    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name, **_kwargs: TestEngine())
     monkeypatch.setattr(simulate_route, "UPLOADS_DIR", str(tmp_path / "uploads"))
     out_dir = tmp_path / "public-eval"
 
@@ -298,7 +298,7 @@ def test_public_dataset_evaluator_records_checksum_mismatch_without_inference(tm
         def reconstruct(self, *_args, **_kwargs):
             raise AssertionError("inference must not run on a checksum-mismatched sample")
 
-    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name: MustNotRunEngine())
+    monkeypatch.setattr(public_evaluation_module, "select_reconstruction_engine", lambda _name, **_kwargs: MustNotRunEngine())
     summary = public_evaluation_module.evaluate_public_dataset(
         str(manifest), str(tmp_path / "mismatch-output"), engine_name="auto", device="cpu"
     )

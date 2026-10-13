@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:geometry": "node --experimental-strip-types scripts/export-demo-masks.mjs --check",
+    "export:geometry": "node --experimental-strip-types scripts/export-demo-masks.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",

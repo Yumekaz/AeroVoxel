@@ -40,6 +40,7 @@ def get_recon_capability() -> dict[str, Any]:
     cuda_device_count = 0
     torch_version = None
     cuda_version = None
+    cuda_memory_mb = []
     if torch_available:
         try:
             import torch  # type: ignore
@@ -48,6 +49,8 @@ def get_recon_capability() -> dict[str, Any]:
             cuda_available = bool(torch.cuda.is_available())
             cuda_device_count = int(torch.cuda.device_count())
             cuda_version = torch.version.cuda
+            if cuda_available:
+                cuda_memory_mb = [int(torch.cuda.get_device_properties(i).total_memory / (1024*1024)) for i in range(cuda_device_count)]
         except Exception as exc:  # capability reporting must not break the API
             return {
                 "torch_available": True,
@@ -62,7 +65,7 @@ def get_recon_capability() -> dict[str, Any]:
 
     sf3d_available = _module_available("sf3d")
     sf3d_importable, sf3d_import_error = _sf3d_importable()
-    depth_anything_available = bool(torch_available and _module_available("transformers"))
+    depth_anything_available = bool(torch_available and _module_available("transformers") and _module_available("trimesh") and _module_available("PIL"))
     trimesh_available = _module_available("trimesh")
     rembg_available = _module_available("rembg")
     return {
@@ -71,12 +74,14 @@ def get_recon_capability() -> dict[str, Any]:
         "cuda_available": cuda_available,
         "cuda_device_count": cuda_device_count,
         "cuda_version": cuda_version,
+        "cuda_memory_mb": cuda_memory_mb,
+        "sf3d_min_vram_mb": 6144,
         "sf3d_available": sf3d_available,
         "sf3d_importable": sf3d_importable,
         "sf3d_import_error": sf3d_import_error,
         "trimesh_available": trimesh_available,
         "rembg_available": rembg_available,
         "depth_anything_available": depth_anything_available,
-        "ready_for_inference": bool(torch_available and sf3d_importable and trimesh_available),
+        "ready_for_inference": bool(torch_available and sf3d_importable and trimesh_available and rembg_available),
         "recommended_device": "cuda" if cuda_available else "cpu",
     }

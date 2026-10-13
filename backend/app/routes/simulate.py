@@ -2,9 +2,10 @@ import os
 import time
 import numpy as np
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse
 from app.safe_ids import require_safe_job_id
+from app.ml.features import char_length_from_mask
 from app.solvers.lbm_2d import LbmSolver2D, educational_force_metrics
 
 router = APIRouter(prefix="/api")
@@ -20,8 +21,8 @@ _SIM_NY = 64
 
 class SimulateRequest(BaseModel):
     job_id: str
-    wind_speed: float
-    wind_angle_deg: float
+    wind_speed: float = Field(gt=0, le=100, allow_inf_nan=False)
+    wind_angle_deg: float = Field(ge=-45, le=45, allow_inf_nan=False)
 
 class SimulateResponse(BaseModel):
     job_id: str
@@ -91,8 +92,7 @@ async def run_simulation(req: SimulateRequest):
         wake_score = max(0.05, min(0.99, wake_score))
 
         # Characteristic length ≈ solid height (frontal length) in lattice units
-        ys, xs = np.where(mask.astype(bool))
-        char_L = float(ys.max() - ys.min() + 1) if ys.size else 16.0
+        char_L = char_length_from_mask(mask)
         force_m = educational_force_metrics(
             pressure=pressure,
             mask=mask,
@@ -118,6 +118,8 @@ async def run_simulation(req: SimulateRequest):
                 "cd_force_proxy": force_m["cd_force_proxy"],
                 "cd_surface_proxy": force_m["cd_surface_proxy"],
                 "cd_force_proxy_method": force_m["cd_force_proxy_method"],
+                "solver_conditions": {"nx": _SIM_NX, "ny": _SIM_NY, "steps": 600, "tau": 0.6, "u_inlet": u_inlet, "wind_angle_deg": req.wind_angle_deg, "char_length_lu": char_L},
+                "surrogate_comparison_note": "ML uses fixed training conditions on a different grid; its proxy is not an interchangeable live-solve result.",
                 "lbm_seconds": round(time.perf_counter() - simulation_started, 3),
                 "confidence_label": "educational estimate (not certified CFD)",
             }

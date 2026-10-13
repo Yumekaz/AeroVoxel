@@ -41,6 +41,7 @@ class SurrogatePredictResponse(BaseModel):
     target: str
     educational_disclaimer: str
     grid: dict
+    training_conditions: dict = Field(default_factory=dict)
 
 
 # Educational surrogate only needs coarse grids; reject huge payloads (DoS / OOM).
@@ -140,4 +141,5 @@ async def predict_surrogate(req: SurrogatePredictRequest) -> SurrogatePredictRes
         target=str(out["target"]),
         educational_disclaimer=str(out["educational_disclaimer"]),
         grid=out["grid"],
+        training_conditions={key: predictor.bundle.get("meta_dataset", {}).get(key) for key in ("nx", "ny", "tau", "u_inlet", "steps")},
     )

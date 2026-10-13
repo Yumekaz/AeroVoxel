@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from app.recon.depth_mesh import extract_foreground_mask
+from app.recon.export_to_aerovoxel import fit_mask_to_domain
 
 
 def run_opencv_fallback(image_path: str, output_dir: str, **_: Any) -> dict[str, Any]:
@@ -23,7 +24,7 @@ def run_opencv_fallback(image_path: str, output_dir: str, **_: Any) -> dict[str,
     if image is None:
         raise ValueError(f"Could not decode image: {image_path}")
     mask = extract_foreground_mask(image)
-    resized = cv2.resize(mask.astype(np.uint8), (128, 64), interpolation=cv2.INTER_NEAREST).astype(bool)
+    resized = fit_mask_to_domain(mask)
     if not np.any(resized):
         raise ValueError("OpenCV fallback produced an empty simulation mask")
     mask_path = os.path.join(output_dir, "mask.npy")

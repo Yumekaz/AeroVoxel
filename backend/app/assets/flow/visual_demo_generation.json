@@ -1,0 +1,50 @@
+{
+  "generated_utc": "2026-10-13T12:00:18.617800+00:00",
+  "geometry_sha256": "2eff2ac7afb7ac82c3a30921b8903c0a9570b954d16f66b4372eab10127a8ffa",
+  "car_asset_sha256": "b74a6519804218357f9120a12da01936d075060e782efe2a14d3693f04bfcb02",
+  "source": "Exact display-model side projection, CPU D2Q9, educational proxies",
+  "cases": {
+    "sports_car_v1": {
+      "nx": 128,
+      "ny": 64,
+      "steps": 800,
+      "tau": 0.6,
+      "u_inlet": 0.08,
+      "wall_time_s": 1.46,
+      "solid_cells": 353,
+      "array_sha256": {
+        "mask": "866d20f32a49b76f5dea58a35fe0da9299676df1dcf6633c9206e266bffa5d45",
+        "velocity": "0a8d1b37e61d461ce58385099adce3cdd9d13d87887400dd1f107b30742ce9b4",
+        "pressure": "5f5bce9efbe4511cb43d6767d1ab6621e17a075c2221bc61f4cfb4360495e554"
+      },
+      "metrics": {
+        "drag_coefficient_estimate": 0.24228515625,
+        "lift_coefficient_estimate": -0.34454942829437585,
+        "wake_score": 0.052734375,
+        "cd_force_proxy": 1.4283828682670643,
+        "confidence_label": "Educational proxies computed from this cached CPU field; not certified CFD"
+      }
+    },
+    "drone_v1": {
+      "nx": 128,
+      "ny": 64,
+      "steps": 800,
+      "tau": 0.6,
+      "u_inlet": 0.08,
+      "wall_time_s": 1.28,
+      "solid_cells": 182,
+      "array_sha256": {
+        "mask": "a0440ee61bbd5d12cc14b212222a013e0225aba0961695dc778c1730dd1c4b8a",
+        "velocity": "5cdcf6cec173cc0d435e7fc9cc234a89c65f8fedadf1a88b8f2de711b47f661f",
+        "pressure": "2394a9541c10ec1bde3dbfcbf568ed7341b806cf25072200d6d680e9d4e6dc3e"
+      },
+      "metrics": {
+        "drag_coefficient_estimate": 0.22904052734375,
+        "lift_coefficient_estimate": -0.7683627213274844,
+        "wake_score": 0.05,
+        "cd_force_proxy": 0.8169050459291555,
+        "confidence_label": "Educational proxies computed from this cached CPU field; not certified CFD"
+      }
+    }
+  }
+}

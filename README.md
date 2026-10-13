@@ -184,6 +184,7 @@ These runs document **operating limits** (coarse grids, educational metrics, low
 | `POST` | `/api/simulate/simple` | Live 2D LBM |
 | `GET` | `/api/surrogate/status` | Checkpoint availability |
 | `POST` | `/api/surrogate/predict` | Fast educational Cd-proxy |
+| `POST` | `/api/recon/import` | Import and preview a solver-ready reconstruction mask |
 | `GET` | `/api/recon/capability` | Report optional SF3D/CUDA capability without loading weights |
 | `GET` | `/api/recon/diagnostics` | Non-destructive runtime, NVIDIA, and display-device diagnostics |
 
@@ -233,3 +234,31 @@ AeroVoxel/
 ## License
 
 Portfolio and educational prototype. Use and adapt with attribution; do not present results as certified engineering analysis.
+
+
+## Current interface and reconstruction workflow
+
+The tunnel uses a horizontal object picker, a wide interactive viewer, a compact
+wind/overlay dock and a collapsible results panel. Side/perspective views,
+camera reset, pause/play, keyboard-accessible switches and mobile reflow are
+supported. Moving trails follow loaded velocity fields; offline visuals are explicitly
+labeled illustrative. Named demos default to recognizable smooth 3D models.
+Voxel geometry displays the actual solver mask. The car and drone CPU caches
+are regenerated from the side projection of the same display models. Flow remains
+2D, and coarse grid cells cannot resolve every surface detail. Square lattice cells
+use equal X/Y display scale. The detailed car is a local, licensed asset; its
+[author and license](frontend/public/models/ATTRIBUTION.md) are included in the app.
+
+After changing display geometry, run `npm --prefix frontend run export:geometry`,
+then `.venv/Scripts/python.exe backend/scripts/regenerate_visual_demo_fields.py`
+with a fresh `--output-dir`. `npm --prefix frontend run check:geometry` verifies
+the published projections without modifying them. To reproduce the sanitized car
+asset from the official source GLB, use `frontend/scripts/prepare-car-asset.py --source <path>`.
+
+Optional offline reconstruction exports a normalized `mask.npy`. Choose
+**Import mask**, inspect it, then **Run 2D simulation**. Reconstruction stays
+offline; the browser imports its output rather than launching GPU work.
+
+See [local verification](docs/verification_2026-10-13.md) and
+[reconstruction setup](backend/app/recon/README.md). GPU/SF3D runs and five
+consented real phone captures remain unverified.

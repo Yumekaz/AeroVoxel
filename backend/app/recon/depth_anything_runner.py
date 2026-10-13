@@ -93,6 +93,9 @@ def run_depth_anything(
     model_load_seconds = time.perf_counter() - model_load_started
     inputs = processor(images=image.convert("RGB"), return_tensors="pt")
     inputs = {key: value.to(selected_device) for key, value in inputs.items()}
+    if selected_device.startswith("cuda"):
+        torch.cuda.synchronize(selected_device)
+        torch.cuda.reset_peak_memory_stats(selected_device)
     inference_started = time.perf_counter()
     with torch.inference_mode():
         predicted = model(**inputs).predicted_depth
@@ -143,7 +146,7 @@ def run_depth_anything(
             "total_seconds": round(time.perf_counter() - started, 3),
             "lbm_seconds": None,
         },
-        "peak_vram_mb": round(torch.cuda.max_memory_allocated() / (1024 * 1024), 2) if selected_device.startswith("cuda") else None,
+        "peak_vram_mb": round(torch.cuda.max_memory_allocated(selected_device) / (1024 * 1024), 2) if selected_device.startswith("cuda") else None,
         "mesh": mesh_stats,
         "serialized_mesh": serialized_mesh_stats,
         "mask": mask_info,

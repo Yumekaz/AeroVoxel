@@ -57,7 +57,7 @@ def evaluate_public_dataset(
         raise ValueError("Public dataset evaluation requires input_type=PUBLIC_DATASET")
 
     os.makedirs(output_dir, exist_ok=True)
-    engine = select_reconstruction_engine(engine_name)
+    engine = select_reconstruction_engine(engine_name, device=device)
     client = TestClient(app)
     results: list[dict[str, Any]] = []
     started_all = time.perf_counter()

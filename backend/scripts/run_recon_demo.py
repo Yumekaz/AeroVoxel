@@ -19,24 +19,25 @@ def main() -> int:
     parser.add_argument("--output-dir", default="data/recon_outputs/demo")
     parser.add_argument("--engine", choices=["auto", "sf3d", "depth_anything", "opencv"], default="auto")
     parser.add_argument("--device", choices=["cpu", "cuda"], default=None)
-    parser.add_argument("--texture-resolution", type=int, default=512)
     parser.add_argument(
         "--register-for-api",
         action="store_true",
         help="Copy mask into app/assets/uploads and print a job_id for /api/simulate/simple",
     )
     args = parser.parse_args()
-    engine = select_reconstruction_engine(args.engine)
+    engine = select_reconstruction_engine(args.engine, device=args.device)
     result = engine.reconstruct(args.image, args.output_dir, device=args.device)
     result["selection"] = {
         "requested": args.engine,
-        "selected": engine.name,
+        "selected": result.get("engine", engine.name),
         "reason": getattr(engine, "selection_reason", "explicit engine selection"),
-        "fallback": args.engine == "auto" and engine.name != "stable-fast-3d",
+        "fallback": args.engine == "auto" and result.get("engine", engine.name) != "stable-fast-3d",
     }
     if args.register_for_api:
         uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app", "assets", "uploads"))
         result["simulation_job"] = register_mask_for_simulation(result["mask"]["mask_path"], uploads_dir)
+    with open(os.path.join(args.output_dir, "result.json"), "w", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2)
     print(json.dumps(result, indent=2))
     print(f"[recon] Feed the exported mask into: POST /api/simulate/simple (job_id upload contract)")
     return 0

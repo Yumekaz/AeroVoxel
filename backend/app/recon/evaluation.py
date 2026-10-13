@@ -55,7 +55,7 @@ def evaluate_manifest(
     """Run every manifest case and record successes/failures, never fabricating output."""
     rows = load_manifest(manifest_path)
     os.makedirs(output_dir, exist_ok=True)
-    selected_engine = None if runner is not None else select_reconstruction_engine(engine)
+    selected_engine = None if runner is not None else select_reconstruction_engine(engine, device=device)
     results: list[dict[str, Any]] = []
     started_all = time.perf_counter()
     for row in rows:
