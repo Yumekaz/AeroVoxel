@@ -94,3 +94,14 @@ retained. The browser's FPS display sampled 1-6 FPS in this automation session,
 including lightweight scenes, so sustained animation performance is not certified
 by these captures. Physical-device performance and slow-network loading remain
 unmeasured.
+
+## Real web photographs follow-up
+
+The subsequent five-case public-photo CPU run completed all reconstructions and
+LBM solves. It exposed and corrected independent X/Y stretching in the depth mesh
+builder. The full regression suite is now 42 passing tests. Foreground/mesh ratio
+agreement is within about 1%; 3/5 meshes are watertight, and thin/reflective object
+parts and shadows remain quality limitations. Physical-phone capture/performance
+and CUDA/SF3D validation remain outstanding. Source attribution, raw evidence
+locations, actual performance observations and reproduction commands are in
+[the web-photo CPU report](web_photo_cpu_2026-10-13.md).

@@ -751,7 +751,8 @@ function App() {
   const geometryLabel = smoothDemo
     ? "Smooth demo model"
     : "Solver mask geometry";
-  const sliceLimit = domainHeight(flowData ?? previewMask) / 2 - 0.1;
+  const displayGrid = flowData ?? previewMask;
+  const sliceLimit = domainHeight(displayGrid) / 2 - 0.1;
   const sourceLabel = previewMask
     ? "Imported mask · ready to simulate"
     : !flowData
@@ -1202,8 +1203,8 @@ function App() {
               <DetailRow
                 label="Grid"
                 value={
-                  flowData
-                    ? `${flowData.nx} × ${flowData.ny}`
+                  displayGrid
+                    ? `${displayGrid.nx} × ${displayGrid.ny}`
                     : "Procedural preview"
                 }
               />

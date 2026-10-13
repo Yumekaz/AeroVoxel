@@ -1,0 +1,72 @@
+[
+  {
+    "case_id": "WEB_01_CAR",
+    "input_type": "PUBLIC_DATASET",
+    "label": "Toy car",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Hot_Wheels_Modellauto.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/9/9f/Hot_Wheels_Modellauto.jpg",
+    "author": "Stefan-Xp",
+    "license": "CC BY-SA 3.0",
+    "license_url": "http://creativecommons.org/licenses/by-sa/3.0/",
+    "sha256": "0e81679f4d74fd26ae1a20f7aa09f4cbad365b445a1678d63911c9b051c5aa03",
+    "width": 3329,
+    "height": 2005,
+    "file_name": "WEB_01_CAR.jpg"
+  },
+  {
+    "case_id": "WEB_02_CUBE",
+    "input_type": "PUBLIC_DATASET",
+    "label": "Rubik cube",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Rubicks_cube_IMG_5429.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/e/e5/Rubicks_cube_IMG_5429.jpg",
+    "author": "Rama",
+    "license": "CC BY-SA 2.0 fr",
+    "license_url": "https://creativecommons.org/licenses/by-sa/2.0/fr/deed.en",
+    "sha256": "c50c50780947a45c230788d023ecf2ea4ef756715214468205b6c290d9e46db9",
+    "width": 4000,
+    "height": 4000,
+    "file_name": "WEB_02_CUBE.jpg"
+  },
+  {
+    "case_id": "WEB_03_SPINNER",
+    "input_type": "PUBLIC_DATASET",
+    "label": "Fidget spinner",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Fidget_spinner_red,_cropped.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/f/f3/Fidget_spinner_red%2C_cropped.jpg",
+    "author": "Árni Dagur",
+    "license": "CC0",
+    "license_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "sha256": "b5bef11b46cc56622f3703deee11c37d3bbe602bf374046b03019fce6625a051",
+    "width": 2671,
+    "height": 2671,
+    "file_name": "WEB_03_SPINNER.jpg"
+  },
+  {
+    "case_id": "WEB_05_CORKSCREW",
+    "input_type": "PUBLIC_DATASET",
+    "label": "Corkscrew",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Cork_Screw_Red.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/d/de/Cork_Screw_Red.jpg",
+    "author": "Kyle May",
+    "license": "CC BY 2.0",
+    "license_url": "https://creativecommons.org/licenses/by/2.0",
+    "sha256": "6ead94ba7a9a9967451658af895a017a127c866d811e4e608a8ab3bbfd269913",
+    "width": 2440,
+    "height": 3644,
+    "file_name": "WEB_05_CORKSCREW.jpg"
+  },
+  {
+    "case_id": "WEB_06_PLIERS",
+    "input_type": "PUBLIC_DATASET",
+    "label": "Needle nose pliers",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Basic_NeedleNose_Pliers.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/c/c6/Basic_NeedleNose_Pliers.jpg",
+    "author": "oomlout",
+    "license": "CC BY-SA 2.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/2.0",
+    "sha256": "5061e5b3244bddaa1531a7d6cc6637254e69e950448983d31494c56cd72cfc78",
+    "width": 3087,
+    "height": 2058,
+    "file_name": "WEB_06_PLIERS.jpg"
+  }
+]

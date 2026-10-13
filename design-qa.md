@@ -104,3 +104,15 @@ were not identical because the camera was still settling after view/viewport
 changes; these attempts remain preserved and are not claimed as pixel-exact proof.
 
 final result: passed (visual layout, geometry, materials and field alignment)
+
+## Real-photo browser follow-up
+
+Imported the real photographed spinner's voxel slice, confirmed its actual
+128x64 preview grid, and ran the existing CPU simulation from the browser.
+Capture 51 shows the computed field; capture 55 shows the 390x844 mobile layout
+(document width 390). The visible desktop viewer reported 113-120 FPS at idle and
+76 FPS in one sample during CPU inference; timing samples are preserved in
+web-photo-performance.json. Earlier low automation FPS did not reproduce here.
+No speculative renderer optimization or visual redesign was applied. Physical
+phone performance remains untested. Pause states were exercised but pixel
+comparisons 52/53 were not exact; raw attempts remain preserved.

@@ -221,3 +221,19 @@ CUDA/SF3D hardware validation are still outstanding.
 The live API now shares the surrogate dataset's characteristic-length formula.
 Live grid/time/inlet settings still differ from training conditions, so the
 surrogate is displayed as a separate fixed-condition educational proxy.
+
+## Attributed real web photographs
+
+Five Wikimedia Commons photographs now provide a repeatable public-input CPU
+baseline. They are typed `PUBLIC_DATASET`, with source pages, author/license data
+and immutable checksums in `web_photo_sources.json`. Download them from the
+repository root with `python backend/scripts/prepare_web_photo_manifest.py`, then
+pass the resulting manifest to `verify_recon_cpu.py` for a complete CPU run, or
+`evaluate_recon.py` for CUDA reconstruction evaluation. Use fresh output paths;
+downloaded originals and raw outputs remain ignored.
+
+The five-case CPU run completed 5/5 reconstructions and LBM solves. Image-space
+proportions are now retained in the depth-to-mesh stage as well as mask fitting.
+Only 3/5 exported meshes were watertight; reflective/thin parts, shadows and
+center-slice geometry remain limitations. See the
+[full web-photo findings](../../../docs/web_photo_cpu_2026-10-13.md).

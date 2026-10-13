@@ -73,8 +73,12 @@ def depth_map_to_mesh(depth: np.ndarray, mask: np.ndarray, max_size: int = 192) 
     z_back = np.full_like(z_front, 0.03)
 
     ys, xs = np.indices((out_h, out_w))
-    x_world = (xs / max(out_w - 1, 1) - 0.5) * 2.0
-    y_world = (0.5 - ys / max(out_h - 1, 1)) * 2.0
+    # One image-space scale for both axes. Independently mapping each axis to
+    # [-1, 1] stretches landscape/portrait inputs before mask export can fit them.
+    # Keep the source extent even when the mesh raster's minimum size is clamped.
+    longest_side = max(w - 1, h - 1, 1)
+    x_world = (xs / max(out_w - 1, 1) - 0.5) * 2.0 * (w - 1) / longest_side
+    y_world = (0.5 - ys / max(out_h - 1, 1)) * 2.0 * (h - 1) / longest_side
     front = np.column_stack([x_world.ravel(), y_world.ravel(), z_front.ravel()])
     back = np.column_stack([x_world.ravel(), y_world.ravel(), z_back.ravel()])
     valid = mask_small.ravel()
