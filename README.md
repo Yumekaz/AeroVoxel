@@ -1,264 +1,299 @@
+<div align="center">
+
 # AeroVoxel
 
-**Educational virtual wind tunnel from smartphone imagery** — lightweight Lattice Boltzmann simulation, interactive browser visualization, and a trained ML surrogate for fast educational drag proxies.
+**An educational virtual wind tunnel, from image to airflow.**
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=black)](https://vitejs.dev/)
-[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/License-Portfolio-lightgrey)](#license)
+Explore a built-in specimen or upload a picture, turn its outline into a grid,
+and watch a CPU-computed flow field in your browser.
 
----
+[Get started](#get-started) · [Try the tunnel](#try-the-tunnel) · [How it works](#how-it-works) · [Explore the ML model](#machine-learning-surrogate) · [Limitations](#limitations)
 
-## Why this exists
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-20232a?logo=react&logoColor=61DAFB)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Three.js](https://img.shields.io/badge/Three.js-000000?logo=threedotjs&logoColor=white)
 
-Physical wind tunnels and production CFD are expensive, slow to set up, and hard to approach for early learning. AeroVoxel is a **browser-first prototype** that turns a simple photo (or a built-in demo shape) into an interactive airflow view: pressure coloring, streamlines, wake cues, and educational force-style metrics — running on a normal laptop CPU.
+<img src="frontend/public/studio/airfoil-studio.webp" alt="Illustrative airfoil in a wind tunnel" width="900">
 
-It is built as a **full system**, not a single notebook: computer vision → simulation domain → Lattice Boltzmann (LBM) → Three.js viewer, plus an optional **machine-learning surrogate** trained on this project’s own LBM labels.
+<sub>Illustrative landing artwork. See <a href="frontend/public/studio/CREDITS.md">visual asset credits</a>.</sub>
 
-> **Scope:** Educational and prototype-grade. **Not** certified CFD, **not** a substitute for professional wind-tunnel testing, and **not** perfect AI-based 3D reconstruction from video.
+</div>
 
-## AI / ML modules
+> **Educational prototype.** Live uploaded-image simulations use a coarse 2D CPU solver. The displayed force values are educational estimates, not validated engineering measurements.
 
-1. **Educational LBM surrogate (CPU)** — a trained, evaluated scikit-learn model maps masks to this project's `cd_force_proxy` labels; metrics and baselines are in [`docs/ai_metrics.md`](docs/ai_metrics.md).
-2. **Neural 3D reconstruction (hardware-aware)** — SF3D is the preferred GPU adapter when its runtime and VRAM requirements are met; Depth Anything V2 Small is a real CPU/CUDA alternative that produces a depth-conditioned mesh and center-slice `mask.npy`; OpenCV remains the explicit final 2D fallback. See [`backend/app/recon/README.md`](backend/app/recon/README.md).
+## Explore the tunnel
 
-Neural reconstruction is best-effort prototype geometry, not metrology-grade scanning. The current interactive path remains 2D CPU LBM; no certified CFD or perfect video-to-3D claim is made.
+<table>
+<tr>
+<td align="center" width="25%"><img src="frontend/public/studio/airfoil.webp" alt="Airfoil specimen" width="220"><br><strong>NACA 0012</strong></td>
+<td align="center" width="25%"><img src="frontend/public/studio/drone.webp" alt="Quadcopter specimen" width="220"><br><strong>Quadcopter</strong></td>
+<td align="center" width="25%"><img src="frontend/public/studio/sports_car.webp" alt="Concept car specimen" width="220"><br><strong>Concept car</strong></td>
+<td align="center" width="25%"><img src="frontend/public/studio/cylinder.webp" alt="Circular cylinder specimen" width="220"><br><strong>Circular cylinder</strong></td>
+</tr>
+</table>
 
----
+These specimens use saved CPU fields. Explore flow paths, pressure cues, speed maps, camera controls and educational metrics. An optional offline 3D sphere appears when its generated assets are available.
 
-## Highlights
+## What you can do
 
-| Capability | What you get |
-|------------|----------------|
-| **Interactive wind tunnel UI** | Three.js viewer with streamlines, pressure fields, and clear data-source labels |
-| **Demo library** | Car, drone, airfoil, circular cylinder — precomputed educational 2D flow fields |
-| **Image / video upload** | OpenCV silhouette extraction and optional scale-card detection |
-| **Live 2D physics** | D2Q9 Lattice Boltzmann on CPU from an uploaded mask |
-| **Offline 3D sample** | Optional coarse D3Q19 sphere dataset (generated offline; shown only when assets exist) |
-| **ML surrogate** | Trained models map a 2D mask → educational `cd_force_proxy` in milliseconds, with baselines and held-out metrics |
-| **Resilient demo path** | Cached cases and offline fallback so presentations do not depend on a perfect network |
+- **Upload a capture** — use an image or supported video to create a 2D obstacle mask with OpenCV.
+- **Import a mask** — load a prepared `.npy` mask and inspect it before simulation.
+- **Run a live simulation** — compute velocity and relative pressure around the mask with the CPU D2Q9 Lattice Boltzmann solver.
+- **Explore the result** — switch views, pause the flow, inspect the speed map and adjust display layers.
+- **Predict a drag proxy** — use the trained ML surrogate on shape features.
+- **Present offline** — explore bundled specimen fields when the local backend is unavailable.
 
----
+## Get started
 
-## System overview
+### Prerequisites
 
-```text
-  Phone image / demo shape
-            │
-            ▼
-   OpenCV mask + scale cues
-            │
-            ├──────────────────► Live 2D LBM (CPU) ──┐
-            │                                         │
-            ├──────────────────► Cached flow fields ──┼──► Browser wind tunnel
-            │                                         │         (Three.js)
-            └──────────────────► ML surrogate ────────┘
-                                 (fast Cd proxy only)
-```
+- Python 3.10 or newer
+- Node.js 20.19+ or 22.12+ and npm
+- A desktop browser with WebGL support
 
-**Shared contract:** velocity, pressure, and mask arrays use one schema so the UI does not care whether data came from cache, a live solve, or offline 3D precompute.
+Clone the repository and open two terminals in its root. The commands below use PowerShell on Windows.
 
----
+### 1. Start the backend
 
-## Tech stack
-
-| Layer | Choices |
-|-------|---------|
-| Frontend | React, Vite, Three.js, TypeScript |
-| Backend | FastAPI, NumPy, OpenCV |
-| Simulation | Custom D2Q9 (2D) and D3Q19 (3D) Lattice Boltzmann solvers |
-| Machine learning | scikit-learn surrogates (ablation: linear, MLP, tree ensembles, …) trained on in-house LBM labels |
-| Packaging | Local venv + npm; no cloud dependency for the core demo |
-
----
-
-## Quick start
-
-### 1. Backend
-
-```bash
+```powershell
 cd backend
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # macOS / Linux
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 2. Frontend
+On macOS or Linux, activate the environment with `source .venv/bin/activate`. The backend health check is available at [127.0.0.1:8000/health](http://127.0.0.1:8000/health).
 
-```bash
+### 2. Start the frontend
+
+In the second terminal:
+
+```powershell
 cd frontend
 npm install
-cp .env.example .env           # optional — default API http://127.0.0.1:8000
 npm run dev
 ```
 
-Open **http://localhost:5173** → try a demo object or upload an image.
+Open [127.0.0.1:5173](http://127.0.0.1:5173/). The frontend uses `http://127.0.0.1:8000` by default. To change it, copy `frontend/.env.example` to `frontend/.env` and update `VITE_API_URL`.
 
-### 3. Optional assets
+<details>
+<summary><strong>PowerShell activation or connection trouble?</strong></summary>
 
-```bash
-cd backend
-venv\Scripts\activate
-python -m app.services.cache_generator        # 2D demo flow fields
-python -m app.services.cache_generator_3d      # sphere 3D cache (~1–3 min CPU)
+- If PowerShell blocks activation, use the environment's Python directly: `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, then `.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+- Keep both terminals running. Check the backend health URL and the frontend's `VITE_API_URL` if the app says **Offline demo**.
+- The backend is required for a new upload, mask import, live solve and surrogate prediction. Bundled specimen fields remain available in offline demo mode.
+
+</details>
+
+## Try the tunnel
+
+### Explore a specimen
+
+1. Select **Explore the tunnel**, then choose an airfoil, quadcopter, car or cylinder.
+2. Use the camera controls and **Display** menu to explore the scene.
+3. Select **Speed map** for a 2D view of the loaded velocity field.
+
+The source label **Cached CPU field** identifies a saved field.
+
+### Run your own image
+
+1. Confirm the top bar says **CPU solver online**.
+2. Select **Upload capture** and choose a clear image with one object against a contrasting background.
+3. Inspect the pink contour in **Your capture**. An incomplete contour produces an incomplete obstacle.
+4. Select **Run 2D simulation** and wait for **Live 2D LBM field**.
+5. Open **Speed map** or the results panel to inspect the result.
+
+Immediately after upload, the viewer shows a closest cached template while the new mask is ready to run. The live field appears after the simulation. Video uploads use a selected frame, so they follow the same 2D silhouette workflow.
+
+### Import an existing mask
+
+Choose **Import mask**, select a valid `64 × 128` NumPy mask, inspect the preview and select **Run 2D simulation**. Example masks are in [backend/app/assets/flow](backend/app/assets/flow/), including `cylinder_v1_mask.npy`.
+
+## How it works
+
+```mermaid
+flowchart LR
+    photo["Photo or video"] --> cv["OpenCV contour extraction"]
+    cv --> mask["2D obstacle mask"]
+    file["Import .npy mask"] --> mask
+    mask --> solver["CPU LBM solver<br/>D2Q9"]
+    mask --> features["Geometric features"]
+    features --> model["ML surrogate"]
+    model --> prediction["Drag proxy"]
+    solver --> fields["Velocity and pressure fields"]
+    solver --> estimates["Educational flow estimates"]
+    fields --> viewer["Interactive viewer<br/>React + Three.js"]
+    estimates --> viewer
+    prediction --> viewer
+    preset["Built-in specimens"] --> cached["Cached CPU fields"]
+    cached --> viewer
+
+    classDef input fill:#e5f3fa,stroke:#3384a3,color:#102c3b
+    classDef process fill:#e9effb,stroke:#5975a5,color:#192b45
+    classDef result fill:#e1f4ed,stroke:#39836d,color:#153c32
+    class photo,file,preset input
+    class cv,mask,solver,features,model,cached process
+    class fields,estimates,prediction,viewer result
 ```
 
-The Sphere 3D entry appears in the app only when the corresponding `.npy` files exist, so the demo list never offers a broken case.
+OpenCV detects an external contour, fits it to the grid and fills the obstacle mask. The 2D solver uses a D2Q9 lattice and bounce-back boundaries to calculate an educational flow field. The live endpoint uses a `128 × 64` grid and 600 steps. The viewer renders the loaded data; its moving flow paths visualise a computed or cached field.
 
----
+The frontend is built with React, TypeScript, Vite and Three.js. A FastAPI backend connects OpenCV, NumPy-based simulation and the scikit-learn surrogate.
+
+<details>
+<summary><strong>Optional depth reconstruction and 3D work</strong></summary>
+
+The separate reconstruction workflow can use Depth Anything V2 Small to produce a depth-conditioned mesh and a centre-slice mask. The browser imports the resulting mask; **Upload capture** itself uses the OpenCV 2D path.
+
+An optional SF3D adapter and an offline D3Q19 sphere workflow also exist. Their availability depends on runtimes, hardware and generated assets. Consult the [reconstruction setup and validation notes](backend/app/recon/README.md) for the current evidence and requirements.
+
+</details>
 
 ## Machine learning surrogate
 
-AeroVoxel includes a **real training pipeline** (not an external AI API wrapper):
+The surrogate estimates the project's `cd_force_proxy` from a mask. It does not produce the velocity or pressure field.
 
-1. Generate synthetic obstacle masks  
-2. Label them with this project’s 2D LBM (`cd_force_proxy`)  
-3. Train and ablate models (mean, linear geometry, MLP, gradient boosting, …)  
-4. Serve the **best held-out** model via API and the UI button **Predict Cd (ML surrogate)**
+```mermaid
+flowchart LR
+    shapes["Generate synthetic<br/>shape masks"] --> labels["Label with<br/>CPU LBM"]
+    labels --> split["Split samples"]
+    split --> train["640 training samples"]
+    split --> test["160 test samples"]
+    train --> candidates["Train candidate models"]
+    candidates --> evaluation["Compare candidate predictions"]
+    test --> evaluation
+    evaluation --> selected["Save selected<br/>MLP model"]
+```
 
-| | |
-|--|--|
-| **Predicts** | Educational force proxy aligned with *this* LBM setup |
-| **Does not predict** | Certified drag coefficients or full 3D industrial CFD fields |
-| **Metrics** | See committed snapshot [`backend/app/ml/artifacts/last_eval.json`](backend/app/ml/artifacts/last_eval.json) |
-| **Typical scale** | ~800 training samples on a 64×32 grid (laptop-friendly) |
+The saved experiment uses geometric features derived from the masks. Candidate models were compared against labels from the held-out portion.
+
+The [saved evaluation](backend/app/ml/artifacts/last_eval.json) records **800 synthetic samples**, with **640 training** and **160 test** samples. The selected `mlp_geom` model uses geometric features and has a recorded MAE of approximately **0.123** against the held-out labels. Several candidate models were compared using that test set, so it is a model-selection result rather than an independent final evaluation. It measures agreement with this solver's labels, not real-world accuracy.
+
+<details>
+<summary><strong>View the prediction plot and regenerate the dataset</strong></summary>
+
+![Held-out MLP predictions against LBM force proxies](backend/app/ml/artifacts/pred_vs_lbm.png)
+
+The synthetic dataset is generated locally under gitignored `backend/data/ml_surrogate/`. From the backend directory, with the backend environment active:
 
 ```bash
-cd backend
 python scripts/generate_ml_dataset.py --n 800 --seed 42
 python scripts/train_surrogate.py --seed 42
 python scripts/eval_surrogate.py
 ```
 
-Without a trained checkpoint, the API returns **503** with train instructions; the UI disables the predict button.
+The trained bundle and evaluation snapshot are in [backend/app/ml/artifacts](backend/app/ml/artifacts/). Training and live simulation use different conditions and outputs; their displayed values should not be assumed to be directly interchangeable.
 
----
+</details>
 
-## Evaluation & reproducibility
+## Testing and reproducibility
 
-Scripts under `backend/scripts/` support educational validation and robustness checks (reference shapes, grid sensitivity, weak inputs, phone-like synthetic photos). Outputs write to gitignored `evaluation_outputs/`.
+<details>
+<summary><strong>Run the backend tests</strong></summary>
+
+From `backend/`, with its virtual environment active:
 
 ```bash
-cd backend
+python -m pip install -r requirements-test.txt
+python -m pytest -q tests
+```
+
+</details>
+
+<details>
+<summary><strong>Build and check the frontend</strong></summary>
+
+From `frontend/`:
+
+```bash
+npm run build
+npm run lint
+npm run check:geometry
+```
+
+</details>
+
+<details>
+<summary><strong>Evaluation, data preparation and asset generation</strong></summary>
+
+The following commands run from `backend/`. Generated evaluation outputs are gitignored.
+
+```bash
 python scripts/run_evaluation.py --live-2d --try-sphere-cache
 python scripts/run_grid_study.py
 python scripts/run_failure_tests.py
 python scripts/run_phone_photo_tests.py
+python -m app.services.cache_generator
+python -m app.services.cache_generator_3d
 ```
 
-For a real-world public-data substitute when consented phone captures are not
-available, use the optional Pix3D preparation/evaluation path. Pix3D is a
-public real image/shape dataset and must remain labeled `PUBLIC_DATASET`; it
-must not be described as phone capture data:
+Public Pix3D evaluation requires a separately obtained dataset. It is a public-data experiment, not a real phone-capture corpus:
 
 ```bash
-cd backend
-python scripts/prepare_pix3d_manifest.py \
-  --pix3d-root /datasets/pix3d \
-  --output app/recon/recon_manifest.pix3d.csv \
-  --n 5
-python scripts/evaluate_recon.py app/recon/recon_manifest.pix3d.csv \
-  --engine depth_anything --device cpu \
-  --output-dir ../evaluation_outputs/pix3d_depth_anything
+python scripts/prepare_pix3d_manifest.py --pix3d-root /datasets/pix3d --output app/recon/recon_manifest.pix3d.csv --n 5
+python scripts/evaluate_recon.py app/recon/recon_manifest.pix3d.csv --engine depth_anything --device cpu --output-dir ../evaluation_outputs/pix3d_depth_anything
 ```
 
-The project intentionally does not bundle the several-gigabyte dataset or
-private captures. The preparation script verifies local files and records only
-cases that actually exist. See [`backend/app/recon/README.md`](backend/app/recon/README.md)
-for the alternative-model decision record and current GPU limitations.
+See the [local verification record](docs/verification_2026-10-13.md), [AI metrics](docs/ai_metrics.md) and [reconstruction documentation](backend/app/recon/README.md) for scope and evidence. The reconstruction documentation covers optional dependencies and model downloads.
 
-These runs document **operating limits** (coarse grids, educational metrics, low-Re offline 3D) rather than claiming mesh-independent engineering accuracy.
+</details>
 
----
+<details>
+<summary><strong>API overview</strong></summary>
 
-## API (summary)
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Backend health |
+| GET | `/api/demo-cases` | Available specimen cases |
+| GET | `/api/flow-field/{case_id}` | Flow metadata and array URLs |
+| POST | `/api/upload` | Process an image or video |
+| POST | `/api/simulate/simple` | Run the CPU 2D solver |
+| GET | `/api/surrogate/status` | Check model availability |
+| POST | `/api/surrogate/predict` | Predict the educational drag proxy |
+| POST | `/api/recon/import` | Import a prepared mask |
+| GET | `/api/recon/capability` | Check reconstruction capabilities |
+| GET | `/api/recon/diagnostics` | Inspect runtime diagnostics |
 
-| Method | Path | Role |
-|--------|------|------|
-| `GET` | `/health` | Health check |
-| `GET` | `/api/demo-cases` | Available demos (asset-gated) |
-| `GET` | `/api/flow-field/{case_id}` | Flow metadata + array URLs |
-| `POST` | `/api/upload` | Image/video → mask pipeline |
-| `POST` | `/api/simulate/simple` | Live 2D LBM |
-| `GET` | `/api/surrogate/status` | Checkpoint availability |
-| `POST` | `/api/surrogate/predict` | Fast educational Cd-proxy |
-| `POST` | `/api/recon/import` | Import and preview a solver-ready reconstruction mask |
-| `GET` | `/api/recon/capability` | Report optional SF3D/CUDA capability without loading weights |
-| `GET` | `/api/recon/diagnostics` | Non-destructive runtime, NVIDIA, and display-device diagnostics |
+Interactive API documentation is available at [127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) while the backend is running.
 
----
+</details>
+
+## Limitations
+
+- OpenCV can miss object boundaries, holes or disconnected parts, especially with cluttered or low-contrast images. Inspect the preview.
+- A single image yields an approximate 2D silhouette for the live workflow. Its 3D-style presentation does not make the live solve 3D.
+- Coarse grids and simplified boundary conditions limit the detail and physical fidelity of the flow.
+- Drag and lift displays are educational estimates. The surrogate predicts a separate solver-derived proxy.
+- Physical accuracy and generalisation to arbitrary real objects require further reference comparisons and validation.
 
 ## Project layout
 
 ```text
 AeroVoxel/
-├── README.md
 ├── backend/
-│   ├── requirements.txt
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── routes/          # REST API
-│   │   ├── solvers/         # LBM 2D / 3D
-│   │   ├── ml/              # Surrogate train / infer
-│   │   ├── services/        # Cache generators
-│   │   └── assets/flow/     # Demo flow fields
-│   └── scripts/             # Eval, ML, robustness
-└── frontend/
-    └── src/                 # React + Three.js app
+│   ├── app/routes/       # FastAPI endpoints
+│   ├── app/solvers/      # LBM implementations
+│   ├── app/ml/           # Surrogate, features and saved artifacts
+│   ├── app/recon/        # Optional reconstruction pipeline
+│   ├── app/assets/flow/  # Bundled specimen fields and masks
+│   ├── scripts/          # Training and evaluation
+│   └── tests/
+├── frontend/
+│   ├── src/              # React interface and Three.js viewer
+│   └── public/           # Models and visual assets
+├── docs/
+└── shared/
 ```
 
----
+<details>
+<summary><strong>Maintaining specimen geometry</strong></summary>
 
-## Design principles
+After changing display geometry, run `npm --prefix frontend run export:geometry`, then run `backend/scripts/regenerate_visual_demo_fields.py` with a fresh `--output-dir` in a configured Python environment. `npm --prefix frontend run check:geometry` checks the published projections. The car asset preparation script is `frontend/scripts/prepare-car-asset.py`.
 
-1. **Honest labels** — cached vs live vs offline 3D vs ML proxy are visible to the user.  
-2. **One data contract** — UI stays stable as solvers improve.  
-3. **Laptop-first** — live work stays 2D CPU; heavy 3D is optional offline precompute.  
-4. **ML with ground truth** — the surrogate is judged against this project’s LBM, with baselines.  
-5. **Demo reliability** — missing optional assets are hidden, not broken links.
+</details>
 
----
+## Credits and license
 
-## Limitations (read this)
-
-- Metrics are **educational** (heuristics and force proxies), not certified \(C_d\) / \(C_l\).  
-- Geometry from upload is a **silhouette / template path**, not full multi-view 3D reconstruction.  
-- Grids are **coarse** by design (interactive teaching, not design sign-off).  
-- Offline sphere cases run at **low Reynolds number**; do not compare casually to high-Re literature drag charts.  
-- The ML model does **not** generalize to arbitrary real-world aerodynamics outside this labeling pipeline.
-
----
-
-## License
-
-Portfolio and educational prototype. Use and adapt with attribution; do not present results as certified engineering analysis.
-
-
-## Current interface and reconstruction workflow
-
-The tunnel uses a horizontal object picker, a wide interactive viewer, a compact
-wind/overlay dock and a collapsible results panel. Side/perspective views,
-camera reset, pause/play, keyboard-accessible switches and mobile reflow are
-supported. Moving trails follow loaded velocity fields; offline visuals are explicitly
-labeled illustrative. Named demos default to recognizable smooth 3D models.
-Voxel geometry displays the actual solver mask. The car and drone CPU caches
-are regenerated from the side projection of the same display models. Flow remains
-2D, and coarse grid cells cannot resolve every surface detail. Square lattice cells
-use equal X/Y display scale. The detailed car is a local, licensed asset; its
-[author and license](frontend/public/models/ATTRIBUTION.md) are included in the app.
-
-After changing display geometry, run `npm --prefix frontend run export:geometry`,
-then `.venv/Scripts/python.exe backend/scripts/regenerate_visual_demo_fields.py`
-with a fresh `--output-dir`. `npm --prefix frontend run check:geometry` verifies
-the published projections without modifying them. To reproduce the sanitized car
-asset from the official source GLB, use `frontend/scripts/prepare-car-asset.py --source <path>`.
-
-Optional offline reconstruction exports a normalized `mask.npy`. Choose
-**Import mask**, inspect it, then **Run 2D simulation**. Reconstruction stays
-offline; the browser imports its output rather than launching GPU work.
-
-See [local verification](docs/verification_2026-10-13.md) and
-[reconstruction setup](backend/app/recon/README.md). GPU/SF3D runs and five
-consented real phone captures remain unverified.
+AeroVoxel is a portfolio and educational prototype. The existing project notice permits use and adaptation with attribution and asks that results are not presented as certified engineering analysis. Third-party assets carry their own terms; see the [car model attribution](frontend/public/models/ATTRIBUTION.md) and [visual asset credits](frontend/public/studio/CREDITS.md).
